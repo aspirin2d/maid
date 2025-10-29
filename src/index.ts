@@ -1,9 +1,18 @@
-import { Hono } from 'hono'
+import "dotenv/config";
 
-const app = new Hono()
+import { Hono } from "hono";
+import db from "./db";
+import { test } from "./db/schema";
 
-app.get('/', (c) => {
-  return c.text('Hello Hono!')
-})
+const app = new Hono();
 
-export default app
+app.get("/", (c) => {
+  // sync mode
+  const { id } = db.insert(test).values({}).returning().get();
+  return c.text("Hello Hono! " + id);
+});
+
+export default {
+  port: process.env.PORT!,
+  fetch: app.fetch,
+};
