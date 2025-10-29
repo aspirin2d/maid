@@ -1,6 +1,6 @@
 /**
  * Example usage of memory CRUD functions
- * Run with: bun example-memory-usage.ts
+ * Run with: bun run examples/memory-usage.ts
  */
 
 import {
@@ -12,13 +12,19 @@ import {
   searchSimilarMemories,
   getTopMemories,
   archiveMemories,
-} from "./src/db/memory";
+} from "../src/db/memory";
+import { createUser, deleteUser } from "../src/db/user";
 
 async function main() {
   console.log("🧪 Testing Memory CRUD Functions\n");
 
-  // Example user ID
-  const userId = Bun.randomUUIDv7();
+  // Create a test user
+  console.log("1️⃣ Creating test user...");
+  const userId = await createUser({
+    name: "Memory Test User",
+    email: `memory-test-${Date.now()}@example.com`,
+  });
+  console.log(`✅ Created user: ${userId}\n`);
 
   // ============
   // 1. CREATE MEMORY
@@ -47,7 +53,8 @@ async function main() {
   const memoryId3 = await createMemory({
     userId,
     category: "EPISODIC_EVENTS",
-    content: "User mentioned they're building an AI assistant with memory features",
+    content:
+      "User mentioned they're building an AI assistant with memory features",
     summary: "Building AI assistant project",
     importanceScore: 9.0,
     sourceMessageIds: ["msg-123", "msg-124"],
@@ -89,7 +96,9 @@ async function main() {
   });
   console.log(`✅ Found ${allMemories.length} active memories:`);
   allMemories.forEach((m) => {
-    console.log(`  - [${m.category}] ${m.summary} (importance: ${m.importanceScore})`);
+    console.log(
+      `  - [${m.category}] ${m.summary} (importance: ${m.importanceScore})`,
+    );
   });
   console.log();
 
@@ -145,6 +154,15 @@ async function main() {
   console.log("9. Hard deleting memory...");
   await deleteMemory(memoryId1, { hard: true });
   console.log(`✅ Hard deleted memory: ${memoryId1}\n`);
+
+  console.log();
+
+  // ============
+  // 10. CLEANUP
+  // ============
+  console.log("🧹 Cleaning up test data...");
+  await deleteUser(userId);
+  console.log("✅ Test user and memories deleted (cascade)\n");
 
   console.log("✨ All tests completed successfully!");
 }

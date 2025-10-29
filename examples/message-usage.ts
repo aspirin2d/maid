@@ -1,10 +1,8 @@
 /**
  * Example usage of message CRUD functions
- * Run with: bun example-message-usage.ts
+ * Run with: bun run examples/message-usage.ts
  */
 
-import db from "./src/db/index";
-import { user } from "./src/db/schema";
 import {
   createMessage,
   createMessages,
@@ -20,22 +18,18 @@ import {
   deleteMessagesOlderThan,
   countUserMessages,
   getMessageStats,
-} from "./src/db/message";
+} from "../src/db/message";
+import { createUser, deleteUser } from "../src/db/user";
 
 async function main() {
   console.log("🧪 Testing Message CRUD Functions\n");
 
   // Create a test user
   console.log("1️⃣ Creating test user...");
-  const [testUser] = await db
-    .insert(user)
-    .values({
-      name: "Message Test User",
-      email: "message-test@example.com",
-    })
-    .returning({ id: user.id });
-
-  const userId = testUser!.id;
+  const userId = await createUser({
+    name: "Message Test User",
+    email: `message-test-${Date.now()}@example.com`,
+  });
   console.log(`✅ Created user: ${userId}\n`);
 
   // ============
@@ -243,8 +237,7 @@ async function main() {
   // CLEANUP
   // ============
   console.log("🧹 Cleaning up test data...");
-  const { eq } = await import("drizzle-orm");
-  await db.delete(user).where(eq(user.id, userId));
+  await deleteUser(userId);
   console.log("✅ Test user and all messages deleted (cascade)\n");
 
   console.log("✨ All tests completed successfully!");
