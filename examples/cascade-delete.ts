@@ -3,9 +3,9 @@
  * When a user is deleted, their memories and vector embeddings should also be deleted
  */
 
-import db from "./src/db/index";
-import { user, memory } from "./src/db/schema";
-import { createMemory } from "./src/db/memory";
+import db from "../src/db/index";
+import { user, memory } from "../src/db/schema";
+import { createMemory } from "../src/db/memory";
 import { eq } from "drizzle-orm";
 
 async function testCascadeDelete() {
@@ -68,7 +68,9 @@ async function testCascadeDelete() {
   const vectorsBeforeDelete = sqlite
     .prepare("SELECT memory_id FROM vec_memories WHERE memory_id IN (?, ?, ?)")
     .all(memoryId1, memoryId2, memoryId3);
-  console.log(`✅ Found ${vectorsBeforeDelete.length} vector embeddings in vec_memories\n`);
+  console.log(
+    `✅ Found ${vectorsBeforeDelete.length} vector embeddings in vec_memories\n`,
+  );
 
   // Now delete the user
   console.log("4️⃣ Deleting user (should cascade to memories and vectors)...");
@@ -84,13 +86,17 @@ async function testCascadeDelete() {
     .select()
     .from(memory)
     .where(eq(memory.userId, testUser!.id));
-  console.log(`📊 Memories remaining: ${memoriesAfterDelete.length} (expected: 0)`);
+  console.log(
+    `📊 Memories remaining: ${memoriesAfterDelete.length} (expected: 0)`,
+  );
 
   // Verify vec_memories are deleted
   const vectorsAfterDelete = sqlite
     .prepare("SELECT memory_id FROM vec_memories WHERE memory_id IN (?, ?, ?)")
     .all(memoryId1, memoryId2, memoryId3);
-  console.log(`📊 Vector embeddings remaining: ${vectorsAfterDelete.length} (expected: 0)\n`);
+  console.log(
+    `📊 Vector embeddings remaining: ${vectorsAfterDelete.length} (expected: 0)\n`,
+  );
 
   // Final verdict
   if (memoriesAfterDelete.length === 0 && vectorsAfterDelete.length === 0) {
@@ -101,10 +107,14 @@ async function testCascadeDelete() {
   } else {
     console.log("❌ FAILURE: Cascade delete did not work as expected");
     if (memoriesAfterDelete.length > 0) {
-      console.log(`   ✗ ${memoriesAfterDelete.length} memories were not deleted`);
+      console.log(
+        `   ✗ ${memoriesAfterDelete.length} memories were not deleted`,
+      );
     }
     if (vectorsAfterDelete.length > 0) {
-      console.log(`   ✗ ${vectorsAfterDelete.length} vector embeddings were not deleted`);
+      console.log(
+        `   ✗ ${vectorsAfterDelete.length} vector embeddings were not deleted`,
+      );
     }
     process.exit(1);
   }
