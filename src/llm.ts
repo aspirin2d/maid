@@ -15,7 +15,9 @@ export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL;
 export const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE ?? "24h"; // e.g. "30m", "2h", "-1"
 
 export function getOpenAI(): OpenAI {
-  return new OpenAI();
+  return new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY!,
+  });
 }
 
 export function getOllama(): Ollama {

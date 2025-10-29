@@ -50,6 +50,7 @@ bun migrate.ts
 ```
 
 This will:
+
 - Run Drizzle migrations to create `user` and `memory` tables
 - Create `vec_memories` virtual table for vector embeddings
 - Set up triggers for automatic vector cleanup
@@ -123,7 +124,8 @@ const topMemories = await getTopMemories("user-123", 10);
 
 // Update memory (auto-regenerates embeddings)
 await updateMemory(memoryId, {
-  content: "User is a senior software engineer specializing in TypeScript and AI",
+  content:
+    "User is a senior software engineer specializing in TypeScript and AI",
   importanceScore: 9.0,
 });
 
@@ -158,6 +160,7 @@ bun example/seed-and-search.ts
 ```
 
 This demonstrates:
+
 - Creating test users
 - Batch memory creation
 - Semantic similarity search
@@ -165,7 +168,7 @@ This demonstrates:
 - Category filtering
 - Top memories by importance
 
-See [example/README.md](example/README.md) for detailed documentation.
+See [example/README.md](examples/README.md) for detailed documentation.
 
 ### Simple CRUD Example
 
@@ -187,6 +190,7 @@ bun test-cascade-delete-comprehensive.ts
 ```
 
 Verifies:
+
 - User deletion cascades to memories
 - Memory deletion triggers vector cleanup
 - Deletion is isolated (other users unaffected)
@@ -206,10 +210,12 @@ bun test-migrate-preservation.ts
 ### Database Schema
 
 #### `user` table
+
 - User information and preferences
 - Foreign key parent for memories
 
 #### `memory` table
+
 - Memory content, category, and metadata
 - Importance, confidence, and emotional scoring
 - Access tracking and temporal context
@@ -217,6 +223,7 @@ bun test-migrate-preservation.ts
 - Cascades delete to vec_memories
 
 #### `vec_memories` virtual table (SQLite-vec)
+
 - 4096-dimensional vector embeddings
 - K-NN similarity search
 - Automatic cleanup via triggers
@@ -274,11 +281,13 @@ See [src/db/memory.ts](src/db/memory.ts) for complete API documentation with Typ
 ### Embedding Providers
 
 #### Ollama (default)
+
 ```typescript
 await createMemory({...}, { provider: "ollama" });
 ```
 
 #### OpenAI
+
 ```typescript
 await createMemory({...}, { provider: "openai" });
 ```
@@ -290,6 +299,7 @@ await createMemory({...}, { skipEmbedding: true });
 ```
 
 Useful for:
+
 - Testing without embedding service
 - Importing existing memories without regenerating embeddings
 - Soft deletes (update status without re-embedding)
@@ -323,19 +333,23 @@ bun --bun tsc --noEmit
 ## Troubleshooting
 
 **"No such table: vec_memories"**
+
 - Run `bun migrate.ts` to create the vector table
 
 **"Connection refused" for Ollama**
+
 - Ensure Ollama is running: `ollama serve`
 - Check `OLLAMA_BASE_URL` in `.env`
 - Verify embedding model is available: `ollama pull qwen3-embedding`
 
 **Low similarity scores**
+
 - Lower `minSimilarity` threshold (try 0.3-0.5)
 - Use content-based embeddings (enabled by default)
 - Ensure query and content use similar language
 
 **Cascade deletes not working**
+
 - Foreign keys are enabled by default in `src/db/index.ts`
 - Run tests to verify: `bun test-cascade-delete.ts`
 
@@ -346,6 +360,7 @@ MIT
 ## Contributing
 
 Contributions are welcome! Please ensure:
+
 - Tests pass for cascade deletes and data preservation
 - Code follows existing patterns and TypeScript types
 - Examples are updated if adding new features
