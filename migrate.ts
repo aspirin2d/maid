@@ -1,8 +1,9 @@
-import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { sql } from "drizzle-orm";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import * as sqliteVec from "sqlite-vec";
 
 if (process.platform === "darwin") {
   try {
@@ -13,30 +14,46 @@ if (process.platform === "darwin") {
 }
 
 const sqlite = new Database("sqlite.db");
+sqliteVec.load(sqlite);
+
+// Enable foreign key constraints (required for CASCADE deletes)
+sqlite.run("PRAGMA foreign_keys = ON;");
+
+const db = drizzle({ client: sqlite });
 
 // Initialize vector table for memories
-export function initVectorTable() {
+function initVectorTable() {
   try {
-    // Create virtual table for vector embeddings
+    console.log("Initializing vec_memories table...");
+
+    // Create virtual table for vector embeddings if it doesn't exist
     // Using 4096 dimensions for qwen3-embedding model
+    // Note: rowid is auto-generated, memory_id is TEXT reference to memory.id
     db.run(sql`
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
-        memory_id INTEGER PRIMARY KEY,
+        memory_id TEXT,
         embedding FLOAT[4096]
       )
     `);
+
+    // Create trigger to cleanup vectors when memory is deleted
     db.run(sql`
       CREATE TRIGGER IF NOT EXISTS cleanup_memory_vectors
-      AFTER DELETE ON memories
+      AFTER DELETE ON memory
       BEGIN
         DELETE FROM vec_memories WHERE memory_id = OLD.id;
       END;
     `);
+
+    console.log("✅ vec_memories table initialized");
   } catch (error) {
-    console.error("error initializing vector table:", error);
+    console.error("❌ Error initializing vector table:", error);
     throw error;
   }
 }
 
-const db = drizzle(sqlite);
+console.log("Running migrations...");
 migrate(db, { migrationsFolder: "./drizzle" });
+console.log("✅ Migrations complete");
+
+initVectorTable();

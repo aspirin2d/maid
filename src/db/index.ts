@@ -15,6 +15,9 @@ if (process.platform === "darwin") {
 const sqlite = new Database("sqlite.db");
 sqliteVec.load(sqlite);
 
+// Enable foreign key constraints (required for CASCADE deletes)
+sqlite.run("PRAGMA foreign_keys = ON;");
+
 const { sqlite_version, vec_version } = sqlite
   .prepare(
     "select sqlite_version() as sqlite_version, vec_version() as vec_version;",
