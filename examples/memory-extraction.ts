@@ -259,10 +259,9 @@ async function main() {
       finalMemories.map((memory) => ({
         id: memory.id,
         content: memory.content,
+        prevContent: memory.prevContent,
+        category: memory.category,
         action: memory.action,
-        deleted: memory.deleted,
-        createdAt: memory.createdAt,
-        updatedAt: memory.updatedAt,
       })),
       { depth: null },
     );

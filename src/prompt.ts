@@ -58,19 +58,18 @@ export const MemoryUpdateSchema = z.object({
             "WORK",
             "OTHER",
           ])
-          .optional()
           .describe("The category of the memory (required for ADD)"),
         importance: z
           .number()
           .min(0)
           .max(1)
-          .optional()
-          .describe("How important this memory is (0-1 scale, required for ADD)"),
+          .describe(
+            "How important this memory is (0-1 scale, required for ADD)",
+          ),
         confidence: z
           .number()
           .min(0)
           .max(1)
-          .optional()
           .describe(
             "How confident you are about this memory (0-1 scale, required for ADD)",
           ),
