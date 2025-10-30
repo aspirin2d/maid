@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
@@ -13,7 +15,7 @@ if (process.platform === "darwin") {
   } catch {}
 }
 
-const sqlite = new Database("sqlite.db");
+const sqlite = new Database(process.env.SQLITE_DB_PATH!);
 sqliteVec.load(sqlite);
 
 const db = drizzle({ client: sqlite });

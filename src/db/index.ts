@@ -4,6 +4,8 @@ import * as sqliteVec from "sqlite-vec";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
 
+const SQLITE_DB_PATH = process.env.SQLITE_DB_PATH ?? "sqlite.db";
+
 if (process.platform === "darwin") {
   try {
     Database.setCustomSQLite(
@@ -12,7 +14,7 @@ if (process.platform === "darwin") {
   } catch {}
 }
 
-const sqlite = new Database("sqlite.db");
+const sqlite = new Database(SQLITE_DB_PATH);
 sqliteVec.load(sqlite);
 
 // Enable foreign key constraints (required for CASCADE deletes)

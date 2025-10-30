@@ -10,9 +10,19 @@ import {
   type InferSelectModel,
   type InferInsertModel,
 } from "drizzle-orm";
-import db from "./index";
-import { memory } from "./schema";
-import { embedText, type Provider } from "../llm";
+import db from "./db/index";
+import { memory } from "./db/schema";
+import { embedText, type Provider } from "./llm";
+
+let currentEmbedText = embedText;
+
+export function setEmbedTextImplementation(fn: typeof embedText): void {
+  currentEmbedText = fn;
+}
+
+export function resetEmbedTextImplementation(): void {
+  currentEmbedText = embedText;
+}
 
 // ============
 // Types
@@ -24,10 +34,7 @@ export type NewMemory = InferInsertModel<typeof memory>;
 // Create input type - only require essential fields
 export type CreateMemoryInput = Pick<NewMemory, "userId" | "content"> &
   Partial<
-    Omit<
-      NewMemory,
-      "id" | "userId" | "content" | "createdAt" | "updatedAt"
-    >
+    Omit<NewMemory, "id" | "userId" | "content" | "createdAt" | "updatedAt">
   >;
 
 // Update input type - all fields optional except automatic ones
@@ -36,7 +43,7 @@ export type UpdateMemoryInput = Partial<
 >;
 
 export interface ListMemoriesOptions {
-  userId: string;
+  userId: number;
   action?: Memory["action"];
   includeDeleted?: boolean;
   afterCreatedAt?: Date;
@@ -66,17 +73,17 @@ async function upsertMemoryEmbedding(
   }
 
   // Generate embedding
-  const embedding = await embedText(provider, content);
+  const embedding = await currentEmbedText(provider, content);
+
+  const memoryKey = String(memoryId);
 
   // Delete existing embedding if any
-  await db.run(
-    sql`DELETE FROM vec_memories WHERE memory_id = ${String(memoryId)}`,
-  );
+  db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
 
   // Insert new embedding
-  await db.run(
+  db.run(
     sql`INSERT INTO vec_memories(memory_id, embedding, payload)
-        VALUES (${String(memoryId)}, ${JSON.stringify(embedding)}, ${content})`,
+        VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
   );
 }
 
@@ -86,19 +93,24 @@ async function upsertMemoryEmbedding(
 export async function searchSimilarMemories(
   query: string,
   options: {
-    userId: string;
+    userId: number;
     limit?: number;
     provider?: Provider;
     includeDeleted?: boolean;
   },
 ): Promise<Array<Memory & { distance: number }>> {
-  const { userId, limit = 10, provider = "ollama", includeDeleted = false } = options;
+  const {
+    userId,
+    limit = 10,
+    provider = "ollama",
+    includeDeleted = false,
+  } = options;
 
   // Generate embedding for the query
-  const queryEmbedding = await embedText(provider, query);
+  const queryEmbedding = await currentEmbedText(provider, query);
 
   // Optimized: Use INNER JOIN to fetch memory rows and distances in a single query
-  const results = await db.all<Memory & { distance: number }>(
+  const results = db.all<Memory & { distance: number }>(
     sql`
       SELECT
         m.id,
@@ -197,9 +209,7 @@ export async function createMemories(
 /**
  * Get a memory by ID
  */
-export async function getMemory(
-  memoryId: number,
-): Promise<Memory | undefined> {
+export async function getMemory(memoryId: number): Promise<Memory | undefined> {
   const result = await db
     .select()
     .from(memory)
@@ -322,7 +332,8 @@ export async function listMemories(
   const orderBy = options.orderBy ?? "createdAt";
   const orderDir = options.orderDir ?? "desc";
   const orderFn = orderDir === "desc" ? desc : asc;
-  const orderColumn = orderBy === "updatedAt" ? memory.updatedAt : memory.createdAt;
+  const orderColumn =
+    orderBy === "updatedAt" ? memory.updatedAt : memory.createdAt;
 
   query = query.orderBy(orderFn(orderColumn)) as any;
 
@@ -365,7 +376,7 @@ export async function getMemoriesByIds(
  * Get all active (non-deleted) memories for a user
  */
 export async function getActiveMemories(
-  userId: string,
+  userId: number,
   limit?: number,
 ): Promise<Memory[]> {
   let query = db
@@ -385,7 +396,7 @@ export async function getActiveMemories(
  * Get recently updated memories for a user
  */
 export async function getRecentlyUpdatedMemories(
-  userId: string,
+  userId: number,
   limit = 10,
 ): Promise<Memory[]> {
   return await db
@@ -400,7 +411,7 @@ export async function getRecentlyUpdatedMemories(
  * Get memory history (all versions including deleted)
  */
 export async function getMemoryHistory(
-  userId: string,
+  userId: number,
   options?: {
     limit?: number;
     afterTimestamp?: Date;
@@ -434,14 +445,11 @@ export async function getMemoryHistory(
  * Get memories by action type
  */
 export async function getMemoriesByAction(
-  userId: string,
+  userId: number,
   action: "ADD" | "UPDATE" | "DELETE",
   options?: { includeDeleted?: boolean; limit?: number },
 ): Promise<Memory[]> {
-  const conditions = [
-    eq(memory.userId, userId),
-    eq(memory.action, action),
-  ];
+  const conditions = [eq(memory.userId, userId), eq(memory.action, action)];
 
   if (!options?.includeDeleted) {
     conditions.push(eq(memory.deleted, 0));
@@ -464,7 +472,7 @@ export async function getMemoriesByAction(
  * Get deleted memories for a user
  */
 export async function getDeletedMemories(
-  userId: string,
+  userId: number,
   limit?: number,
 ): Promise<Memory[]> {
   let query = db
@@ -484,10 +492,10 @@ export async function getDeletedMemories(
  * Count total memories for a user using SQL COUNT(*)
  */
 export async function countUserMemories(
-  userId: string,
+  userId: number,
   includeDeleted = false,
 ): Promise<number> {
-  const result = await db.all<{ count: number }>(
+  const result = db.all<{ count: number }>(
     sql`
       SELECT COUNT(*) as count
       FROM memory
@@ -502,14 +510,14 @@ export async function countUserMemories(
 /**
  * Get memory statistics for a user using SQL aggregation
  */
-export async function getMemoryStats(userId: string): Promise<{
+export async function getMemoryStats(userId: number): Promise<{
   total: number;
   active: number;
   deleted: number;
   byAction: Record<string, number>;
 }> {
   // Get counts by deleted status in a single query
-  const statusResults = await db.all<{ deleted: number; count: number }>(
+  const statusResults = db.all<{ deleted: number; count: number }>(
     sql`
       SELECT deleted, COUNT(*) as count
       FROM memory
@@ -519,7 +527,7 @@ export async function getMemoryStats(userId: string): Promise<{
   );
 
   // Get counts by action type in a single query
-  const actionResults = await db.all<{ action: string; count: number }>(
+  const actionResults = db.all<{ action: string; count: number }>(
     sql`
       SELECT action, COUNT(*) as count
       FROM memory
@@ -576,7 +584,7 @@ export async function updateMemoryContent(
   const updatedAt = new Date();
 
   // Optimized: Single UPDATE with subquery to get previous content
-  const result = await db.all<{ id: number }>(
+  const result = db.all<{ id: number }>(
     sql`
       UPDATE memory
       SET
@@ -641,7 +649,7 @@ export async function bulkHardDeleteMemories(
 /**
  * Permanently delete all soft-deleted memories for a user
  */
-export async function purgeDeletedMemories(userId: string): Promise<number> {
+export async function purgeDeletedMemories(userId: number): Promise<number> {
   const result = await db
     .delete(memory)
     .where(and(eq(memory.userId, userId), eq(memory.deleted, 1)))
@@ -654,7 +662,7 @@ export async function purgeDeletedMemories(userId: string): Promise<number> {
  * Delete memories older than specified date (hard delete)
  */
 export async function deleteMemoriesOlderThan(
-  userId: string,
+  userId: number,
   cutoffDate: Date,
 ): Promise<number> {
   const result = await db

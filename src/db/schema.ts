@@ -17,7 +17,7 @@ export const messages = sqliteTable(
   "messages",
   {
     id: int("id").primaryKey({ autoIncrement: true }),
-    userId: text("user_id")
+    userId: int("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
 
@@ -40,7 +40,7 @@ export const memory = sqliteTable(
   "memory",
   {
     id: int("id").primaryKey({ autoIncrement: true }),
-    userId: text("user_id")
+    userId: int("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     content: text("content"),

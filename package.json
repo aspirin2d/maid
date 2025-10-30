@@ -2,7 +2,9 @@
   "name": "maid",
   "scripts": {
     "dev": "bun run --hot src/index.ts",
-    "migrate": "bunx drizzle-kit generate && bun run migrate.ts"
+    "migrate": "bunx drizzle-kit generate && bun run migrate.ts",
+    "test": "bun test",
+    "test:memory": "bun test tests/memory.test.ts"
   },
   "dependencies": {
     "dotenv": "^17.2.3",
