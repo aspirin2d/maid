@@ -1,4 +1,4 @@
-import { index, int, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, int, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: int("id").primaryKey({ autoIncrement: true }),
@@ -37,6 +37,23 @@ export const memory = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     content: text("content"),
     prevContent: text("previous_content"),
+
+    // Memory metadata fields
+    category: text("category", {
+      enum: [
+        "PERSONAL_INFO",
+        "PREFERENCE",
+        "GOAL",
+        "ROUTINE",
+        "RELATIONSHIP",
+        "HEALTH",
+        "EVENT",
+        "WORK",
+        "OTHER",
+      ],
+    }),
+    importance: real("importance"), // 0-1 scale
+    confidence: real("confidence"), // 0-1 scale
 
     action: text("action", { enum: ["ADD", "UPDATE", "DELETE"] }),
     deleted: int("deleted")

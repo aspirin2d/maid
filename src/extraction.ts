@@ -30,8 +30,18 @@ export type ExtractedFact = {
   factId: string;
   statement: string;
   confidence: number;
+  importance: number;
+  category:
+    | "PERSONAL_INFO"
+    | "PREFERENCE"
+    | "GOAL"
+    | "ROUTINE"
+    | "RELATIONSHIP"
+    | "HEALTH"
+    | "EVENT"
+    | "WORK"
+    | "OTHER";
   sourceMessageIds: number[];
-  category?: string;
 };
 
 export type MemoryReference = {
@@ -204,10 +214,12 @@ async function extractFactsFromConversation(args: {
     new Set(args.messages.map((message) => message.id)),
   );
 
-  return structured.facts.map((statement, index) => ({
+  return structured.facts.map((fact, index) => ({
     factId: `F${index + 1}`,
-    statement,
-    confidence: 1,
+    statement: fact.text,
+    confidence: fact.confidence,
+    importance: fact.importance,
+    category: fact.category,
     sourceMessageIds: uniqueSourceIds,
   }));
 }
@@ -370,10 +382,21 @@ async function applyMemoryDecisions(args: {
             );
           }
 
+          // Use metadata from decision if provided, otherwise fall back to fact metadata
+          const category =
+            decision.category ?? referencedFact?.category ?? "OTHER";
+          const importance =
+            decision.importance ?? referencedFact?.importance ?? 0.5;
+          const confidence =
+            decision.confidence ?? referencedFact?.confidence ?? 0.5;
+
           const memoryId = await createMemory(
             {
               userId: args.userId,
               content,
+              category,
+              importance,
+              confidence,
               action: "ADD",
             },
             args.provider,
@@ -401,14 +424,29 @@ async function applyMemoryDecisions(args: {
           }
 
           const previousContent = ref.content ?? ref.raw.content ?? null;
+
+          // Prepare update fields
+          const updateFields: any = {
+            content: newContent,
+            prevContent: previousContent ?? undefined,
+            action: "UPDATE",
+            deleted: 0,
+          };
+
+          // Include metadata if provided in the decision
+          if (decision.category) {
+            updateFields.category = decision.category;
+          }
+          if (decision.importance !== undefined) {
+            updateFields.importance = decision.importance;
+          }
+          if (decision.confidence !== undefined) {
+            updateFields.confidence = decision.confidence;
+          }
+
           const success = await updateMemory(
             ref.memoryId,
-            {
-              content: newContent,
-              prevContent: previousContent ?? undefined,
-              action: "UPDATE",
-              deleted: 0,
-            },
+            updateFields,
             args.provider,
           );
           if (!success) {
@@ -519,6 +557,9 @@ export async function runMemoryExtraction(
         event: "ADD" as const,
         id: fact.factId,
         text: fact.statement,
+        category: fact.category,
+        importance: fact.importance,
+        confidence: fact.confidence,
         rationale: "No similar memories found, adding fact directly",
       }),
     );

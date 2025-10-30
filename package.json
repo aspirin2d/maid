@@ -7,6 +7,7 @@
     "test:memory": "bun test tests/memory.test.ts"
   },
   "dependencies": {
+    "dotenv": "^17.2.3",
     "drizzle-orm": "^0.44.7",
     "hono": "^4.10.3",
     "ollama": "^0.6.0",
