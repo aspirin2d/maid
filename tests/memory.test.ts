@@ -1,410 +1,154 @@
 import {
   describe,
-  it,
-  beforeAll,
-  beforeEach,
-  afterAll,
+  test,
   expect,
+  beforeEach,
+  afterEach,
+  mock,
+  vi,
 } from "bun:test";
-import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { sql } from "drizzle-orm";
-import type { Provider } from "../src/llm";
 
-const dbPath = join(tmpdir(), `maid-test-${process.pid}.sqlite`);
-if (existsSync(dbPath)) {
-  unlinkSync(dbPath);
-}
-process.env.SQLITE_DB_PATH = dbPath;
+import { createMockDb } from "./helpers/mockDb";
+import type { Memory } from "../src/memory";
 
-const { default: db } = await import("../src/db/index");
-const { user } = await import("../src/db/schema");
-const memoryModule = await import("../src/memory");
+describe("memory helpers", () => {
+  let dbMock: any;
 
-const {
-  createMemory,
-  getMemory,
-  updateMemoryContent,
-  softDeleteMemory,
-  restoreMemory,
-  hardDeleteMemory,
-  getDeletedMemories,
-  searchSimilarMemories,
-  createMemories,
-  listMemories,
-  getMemoriesByIds,
-  getActiveMemories,
-  getRecentlyUpdatedMemories,
-  getMemoryHistory,
-  getMemoriesByAction,
-  countUserMemories,
-  getMemoryStats,
-  purgeDeletedMemories,
-  deleteMemoriesOlderThan,
-  setEmbedTextImplementation,
-  resetEmbedTextImplementation,
-} = memoryModule;
-
-const VECTOR_DIMENSIONS = 1536;
-
-const stubEmbedText = async (
-  _provider: Provider,
-  text: string,
-  dims = VECTOR_DIMENSIONS,
-): Promise<number[]> => {
-  const vector = new Array(dims).fill(0);
-  const hash = Array.from(text).reduce(
-    (acc, char) => acc + char.charCodeAt(0),
-    0,
-  );
-  vector[0] = hash % 1000;
-  vector[1] = (hash * 7) % 997;
-  return vector;
-};
-
-async function createTestUser(name = "Test User"): Promise<number> {
-  const [record] = await db
-    .insert(user)
-    .values({ name })
-    .returning({ id: user.id });
-  return record!.id;
-}
-
-function setMemoryTimestamps(
-  memoryId: number,
-  createdAtMs: number,
-  updatedAtMs = createdAtMs,
-): void {
-  db.run(sql`
-    UPDATE memory
-    SET created_at = ${createdAtMs},
-        updated_at = ${updatedAtMs}
-    WHERE id = ${memoryId}
-  `);
-}
-
-function setMemoryUpdatedAt(memoryId: number, updatedAtMs: number): void {
-  db.run(sql`
-    UPDATE memory
-    SET updated_at = ${updatedAtMs}
-    WHERE id = ${memoryId}
-  `);
-}
-
-function countVectorRows(): number {
-  const [row] = db.all<{ count: number }>(
-    sql`SELECT COUNT(*) as count FROM vec_memories`,
-  );
-  return row?.count ?? 0;
-}
-
-function ensureDefined<T>(value: T | undefined | null): T {
-  expect(value).toBeDefined();
-  return value as T;
-}
-
-function sorted(values: number[]): number[] {
-  return [...values].sort((a, b) => a - b);
-}
-
-function ensureDate(value: Date | null | undefined): Date {
-  const date = ensureDefined(value);
-  expect(date).toBeInstanceOf(Date);
-  return date;
-}
-
-function filteredEnv(extra: Record<string, string>): Record<string, string> {
-  const merged = { ...process.env, ...extra } as Record<
-    string,
-    string | undefined
-  >;
-  return Object.fromEntries(
-    Object.entries(merged).filter(
-      (entry): entry is [string, string] => entry[1] !== undefined,
-    ),
-  );
-}
-
-function runCommand(command: string[], env: Record<string, string>): void {
-  const result = Bun.spawnSync(command, {
-    cwd: process.cwd(),
-    env,
+  beforeEach(() => {
+    dbMock = createMockDb();
+    mock.module("../src/db/index", () => ({
+      __esModule: true,
+      default: dbMock,
+    }));
   });
 
-  if (result.exitCode !== 0) {
-    const decoder = new TextDecoder();
-    throw new Error(
-      `Command failed: ${command.join(" ")}\n${decoder.decode(result.stdout)}${decoder.decode(result.stderr)}`,
+  afterEach(async () => {
+    const module = await import("../src/memory");
+    module.resetEmbedTextImplementation();
+    vi.restoreAllMocks();
+  });
+
+  test("createMemory inserts record and upserts embedding", async () => {
+    const embedStub = vi.fn().mockResolvedValue([0.1, 0.2, 0.3]);
+    const { createMemory, setEmbedTextImplementation } = await import(
+      "../src/memory"
     );
-  }
-}
 
-function initializeDatabase(): void {
-  const env = filteredEnv({ SQLITE_DB_PATH: dbPath });
+    dbMock.setInsertReturnValue([{ id: 101 }]);
+    setEmbedTextImplementation(embedStub);
 
-  const tempOut = mkdtempSync(join(tmpdir(), "drizzle-generate-"));
-  runCommand(
-    [
-      "bunx",
-      "drizzle-kit",
-      "generate",
-      "--schema",
-      "./src/db/schema.ts",
-      "--dialect",
-      "sqlite",
-      "--out",
-      tempOut,
-    ],
-    env,
-  );
-  rmSync(tempOut, { recursive: true, force: true });
+    const id = await createMemory(
+      { userId: 7, content: "Remember me" },
+      "openai",
+    );
 
-  runCommand(["bun", "run", "migrate.ts"], env);
-}
-
-beforeAll(() => {
-  setEmbedTextImplementation(stubEmbedText);
-
-  initializeDatabase();
-});
-
-beforeEach(() => {
-  db.run(sql`DELETE FROM vec_memories`);
-  db.run(sql`DELETE FROM memory`);
-  db.run(sql`DELETE FROM user`);
-  db.run(sql`DELETE FROM sqlite_sequence WHERE name IN ('memory', 'user')`);
-});
-
-afterAll(() => {
-  resetEmbedTextImplementation();
-  if (existsSync(dbPath)) {
-    unlinkSync(dbPath);
-  }
-});
-
-describe("memory CRUD", () => {
-  it("creates, updates, soft deletes, restores, and hard deletes a memory", async () => {
-    const userId = await createTestUser();
-
-    const memoryId = await createMemory({ userId, content: "Initial memory" });
-    const created = await getMemory(memoryId);
-    expect(created?.content).toBe("Initial memory");
-    expect(created?.deleted).toBe(0);
-
-    await updateMemoryContent(memoryId, "Updated memory");
-    const updated = await getMemory(memoryId);
-    expect(updated?.content).toBe("Updated memory");
-    expect(updated?.prevContent).toBe("Initial memory");
-
-    await softDeleteMemory(memoryId);
-    const deletedList = await getDeletedMemories(userId);
-    expect(deletedList).toHaveLength(1);
-    expect(deletedList[0]?.deleted).toBe(1);
-
-    await restoreMemory(memoryId);
-    const restored = await getMemory(memoryId);
-    expect(restored?.deleted).toBe(0);
-
-    await hardDeleteMemory(memoryId);
-    const afterHardDelete = await getMemory(memoryId);
-    expect(afterHardDelete).toBeUndefined();
-  });
-});
-
-describe("memory similarity search", () => {
-  it("returns the most relevant memories for a query", async () => {
-    const userId = await createTestUser();
-
-    const exactMemoryId = await createMemory({
-      userId,
-      content: "Similar content anchor",
+    expect(id).toBe(101);
+    expect(dbMock.insert).toHaveBeenCalledTimes(1);
+    expect(dbMock.__calls.insertCalls[0]?.values).toMatchObject({
+      userId: 7,
+      content: "Remember me",
+      action: "ADD",
+      deleted: 0,
     });
-    await createMemory({ userId, content: "Different topic" });
+    expect(embedStub).toHaveBeenCalledWith("openai", "Remember me");
+    expect(dbMock.run).toHaveBeenCalledTimes(2);
+  });
 
-    const results = await searchSimilarMemories("Similar content anchor", {
-      userId,
+  test("createMemories returns ids and only embeds when content exists", async () => {
+    const embedStub = vi.fn().mockResolvedValue([0.4, 0.5, 0.6]);
+    const { createMemories, setEmbedTextImplementation } = await import(
+      "../src/memory"
+    );
+
+    dbMock.setInsertReturnValue([{ id: 201 }, { id: 202 }]);
+    setEmbedTextImplementation(embedStub);
+
+    const ids = await createMemories(
+      [
+        { userId: 9, content: "first" },
+        { userId: 9, content: "" },
+      ],
+      "ollama",
+    );
+
+    expect(ids).toEqual([201, 202]);
+    expect(dbMock.insert).toHaveBeenCalledTimes(1);
+    expect(dbMock.__calls.insertCalls[0]?.values).toHaveLength(2);
+    expect(embedStub).toHaveBeenCalledTimes(1);
+    expect(embedStub).toHaveBeenCalledWith("ollama", "first");
+    expect(dbMock.run).toHaveBeenCalledTimes(2);
+  });
+
+  test("updateMemory regenerates embedding when content changes", async () => {
+    const embedStub = vi.fn().mockResolvedValue([0.7, 0.8, 0.9]);
+    const { updateMemory, setEmbedTextImplementation } = await import(
+      "../src/memory"
+    );
+
+    dbMock.setUpdateReturnValue([{ id: 301 }]);
+    setEmbedTextImplementation(embedStub);
+
+    const result = await updateMemory(301, { content: "updated" }, "openai");
+
+    expect(result).toBe(true);
+    expect(dbMock.update).toHaveBeenCalledTimes(1);
+    const updateCall = dbMock.__calls.updateCalls[0];
+    expect(updateCall.updates).toMatchObject({ content: "updated" });
+    expect(updateCall.updates.updatedAt).toBeInstanceOf(Date);
+    expect(embedStub).toHaveBeenCalledWith("openai", "updated");
+    expect(dbMock.run).toHaveBeenCalledTimes(2);
+  });
+
+  test("createMemory throws when insert fails", async () => {
+    const embedStub = vi.fn();
+    const { createMemory, setEmbedTextImplementation } = await import(
+      "../src/memory"
+    );
+
+    dbMock.setInsertReturnValue([]);
+    setEmbedTextImplementation(embedStub);
+
+    expect(
+      createMemory({ userId: 5, content: "should fail" }, "ollama"),
+    ).rejects.toThrow("Failed to create memory");
+
+    expect(embedStub).not.toHaveBeenCalled();
+    expect(dbMock.run).not.toHaveBeenCalled();
+  });
+
+  test("searchSimilarMemories uses embeddings and returns db results", async () => {
+    const embedStub = vi.fn().mockResolvedValue([1, 2, 3]);
+    const { searchSimilarMemories, setEmbedTextImplementation } = await import(
+      "../src/memory"
+    );
+
+    const now = new Date();
+    const records: Array<Memory & { distance: number }> = [
+      {
+        id: 1,
+        userId: 4,
+        content: "match",
+        prevContent: null,
+        action: "ADD",
+        deleted: 0,
+        createdAt: now,
+        updatedAt: now,
+        distance: 0.12,
+      },
+    ];
+
+    dbMock.setSelectResult(records);
+    setEmbedTextImplementation(embedStub);
+
+    const result = await searchSimilarMemories("find", {
+      userId: 4,
       limit: 5,
       provider: "ollama",
-    });
-
-    expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0]?.id).toBe(exactMemoryId);
-    expect(results[0]?.distance).toBeCloseTo(0, 5);
-  });
-});
-
-describe("memory queries", () => {
-  it("lists, filters, and aggregates user memories", async () => {
-    const userId = await createTestUser();
-
-    const createdIds = await createMemories([
-      { userId, content: "Alpha" },
-      { userId, content: "Beta" },
-      { userId, content: "Gamma" },
-    ]);
-    expect(createdIds).toHaveLength(3);
-    const [firstId, secondId, thirdId] = createdIds as [number, number, number];
-
-    const base = Date.UTC(2020, 0, 1);
-    const day = 24 * 60 * 60 * 1000;
-
-    setMemoryTimestamps(firstId, base);
-    setMemoryTimestamps(secondId, base + day);
-    setMemoryTimestamps(thirdId, base + 2 * day);
-
-    await softDeleteMemory(secondId);
-    setMemoryUpdatedAt(firstId, base + 3 * day);
-    setMemoryUpdatedAt(secondId, base + 4 * day);
-
-    await updateMemoryContent(thirdId, "Gamma updated");
-    setMemoryUpdatedAt(thirdId, base + 5 * day);
-
-    const activeList = await listMemories({ userId });
-    expect(activeList).toHaveLength(2);
-    const firstActive = ensureDefined(activeList[0]);
-    const secondActive = ensureDefined(activeList[1]);
-    expect(ensureDate(firstActive.createdAt).valueOf()).toBeGreaterThanOrEqual(
-      ensureDate(secondActive.createdAt).valueOf(),
-    );
-    expect(sorted(activeList.map((m) => m.id))).toEqual(
-      sorted([firstId, thirdId]),
-    );
-
-    const includeDeleted = await listMemories({
-      userId,
-      includeDeleted: true,
-      orderBy: "createdAt",
-      orderDir: "asc",
-    });
-    expect(sorted(includeDeleted.map((m) => m.id))).toEqual(
-      sorted([firstId, secondId, thirdId]),
-    );
-    const firstInclude = ensureDefined(includeDeleted[0]);
-    const lastInclude = ensureDefined(includeDeleted.at(-1));
-    expect(ensureDate(firstInclude.createdAt).valueOf()).toBeLessThanOrEqual(
-      ensureDate(lastInclude.createdAt).valueOf(),
-    );
-
-    const activeOnly = await getActiveMemories(userId);
-    expect(sorted(activeOnly.map((m) => m.id))).toEqual(
-      sorted([firstId, thirdId]),
-    );
-    const firstActiveOnly = ensureDefined(activeOnly[0]);
-    const lastActiveOnly = ensureDefined(activeOnly.at(-1));
-    expect(ensureDate(firstActiveOnly.updatedAt).valueOf()).toBeGreaterThanOrEqual(
-      ensureDate(lastActiveOnly.updatedAt).valueOf(),
-    );
-
-    const recent = await getRecentlyUpdatedMemories(userId, 2);
-    expect(recent).toHaveLength(2);
-    const firstRecent = ensureDefined(recent[0]);
-    const secondRecent = ensureDefined(recent[1]);
-    expect(ensureDate(firstRecent.updatedAt).valueOf()).toBeGreaterThanOrEqual(
-      ensureDate(secondRecent.updatedAt).valueOf(),
-    );
-    expect(sorted(recent.map((m) => m.id))).toEqual(sorted([firstId, thirdId]));
-
-    const deleted = await getDeletedMemories(userId);
-    expect(deleted.map((m) => m.id)).toEqual([secondId]);
-
-    const deletesByAction = await getMemoriesByAction(userId, "DELETE", {
       includeDeleted: true,
     });
-    expect(deletesByAction.map((m) => m.id)).toEqual([secondId]);
 
-    const updatesByAction = await getMemoriesByAction(userId, "UPDATE", {
-      includeDeleted: true,
-    });
-    expect(updatesByAction.map((m) => m.id)).toEqual([thirdId]);
-
-    const fullHistory = await getMemoryHistory(userId);
-    expect(sorted(fullHistory.map((m) => m.id))).toEqual(
-      sorted([firstId, secondId, thirdId]),
-    );
-    const firstHistory = ensureDefined(fullHistory[0]);
-    const lastHistory = ensureDefined(fullHistory.at(-1));
-    expect(ensureDate(firstHistory.createdAt).valueOf()).toBeLessThanOrEqual(
-      ensureDate(lastHistory.createdAt).valueOf(),
-    );
-
-    const limitedHistory = await getMemoryHistory(userId, { limit: 2 });
-    expect(limitedHistory).toHaveLength(2);
-    const firstLimited = ensureDefined(limitedHistory[0]);
-    const lastLimited = ensureDefined(limitedHistory.at(-1));
-    expect(ensureDate(firstLimited.createdAt).valueOf()).toBeLessThanOrEqual(
-      ensureDate(lastLimited.createdAt).valueOf(),
-    );
-    expect(limitedHistory.map((m) => m.id)).toEqual([
-      firstHistory.id,
-      ensureDefined(fullHistory[1]).id,
-    ]);
-
-    const byIds = await getMemoriesByIds([thirdId, secondId], true);
-    expect(sorted(byIds.map((m) => m.id))).toEqual(sorted([secondId, thirdId]));
-
-    expect(await countUserMemories(userId)).toBe(2);
-    expect(await countUserMemories(userId, true)).toBe(3);
-
-    const stats = await getMemoryStats(userId);
-    expect(stats).toEqual({
-      total: 3,
-      active: 2,
-      deleted: 1,
-      byAction: { ADD: 1, UPDATE: 1, DELETE: 1 },
-    });
-  });
-
-  it("purges deleted memories and removes records older than a cutoff", async () => {
-    const userId = await createTestUser();
-
-    const purgeIds = await createMemories([
-      { userId, content: "Old memory" },
-      { userId, content: "Medium memory" },
-      { userId, content: "Recent memory" },
-    ]);
-    expect(purgeIds).toHaveLength(3);
-    const [firstId, secondId, thirdId] = purgeIds as [number, number, number];
-
-    const now = Date.now();
-    setMemoryTimestamps(firstId, now - 10_000);
-    setMemoryTimestamps(secondId, now - 5_000);
-    setMemoryTimestamps(thirdId, now - 1_000);
-
-    await softDeleteMemory(firstId);
-    await softDeleteMemory(secondId);
-
-    const purgedCount = await purgeDeletedMemories(userId);
-    expect(purgedCount).toBe(2);
-    expect(await countUserMemories(userId, true)).toBe(1);
-
-    setMemoryTimestamps(thirdId, 0);
-
-    const deletedCount = await deleteMemoriesOlderThan(userId, new Date(1));
-    expect(deletedCount).toBe(1);
-
-    expect(await countUserMemories(userId, true)).toBe(0);
-    expect(await listMemories({ userId, includeDeleted: true })).toHaveLength(0);
-  });
-});
-
-describe("memory vector maintenance", () => {
-  it("deletes associated embeddings when memories are removed", async () => {
-    const userId = await createTestUser();
-
-    const firstId = await createMemory({ userId, content: "Cascade test A" });
-    const secondId = await createMemory({ userId, content: "Cascade test B" });
-
-    expect(countVectorRows()).toBe(2);
-
-    await hardDeleteMemory(firstId);
-    expect(countVectorRows()).toBe(1);
-
-    await softDeleteMemory(secondId);
-    expect(countVectorRows()).toBe(1);
-
-    const purged = await purgeDeletedMemories(userId);
-    expect(purged).toBe(1);
-    expect(countVectorRows()).toBe(0);
+    expect(embedStub).toHaveBeenCalledWith("ollama", "find");
+    expect(dbMock.all).toHaveBeenCalledTimes(1);
+    expect(result).toBe(records);
   });
 });

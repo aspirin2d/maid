@@ -97,6 +97,7 @@ export async function searchSimilarMemories(
     limit?: number;
     provider?: Provider;
     includeDeleted?: boolean;
+    embedding?: number[];
   },
 ): Promise<Array<Memory & { distance: number }>> {
   const {
@@ -104,10 +105,11 @@ export async function searchSimilarMemories(
     limit = 10,
     provider = "ollama",
     includeDeleted = false,
+    embedding,
   } = options;
 
   // Generate embedding for the query
-  const queryEmbedding = await currentEmbedText(provider, query);
+  const queryEmbedding = embedding ?? (await currentEmbedText(provider, query));
 
   // Optimized: Use INNER JOIN to fetch memory rows and distances in a single query
   const results = db.all<Memory & { distance: number }>(

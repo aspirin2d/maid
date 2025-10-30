@@ -14,21 +14,54 @@ if (process.platform === "darwin") {
   } catch {}
 }
 
-const sqlite = new Database(SQLITE_DB_PATH);
-sqliteVec.load(sqlite);
+type DrizzleClient = ReturnType<typeof drizzle>;
 
-// Enable foreign key constraints (required for CASCADE deletes)
-sqlite.run("PRAGMA foreign_keys = ON;");
+export interface DbHandle {
+  sqlite: Database;
+  db: DrizzleClient;
+  close: () => void;
+}
 
-const { sqlite_version, vec_version } = sqlite
-  .prepare(
-    "select sqlite_version() as sqlite_version, vec_version() as vec_version;",
-  )
-  .get() as { sqlite_version: string; vec_version: string };
+export function createDb(filePath: string = SQLITE_DB_PATH): DbHandle {
+  const sqlite = new Database(filePath);
+  sqliteVec.load(sqlite);
 
-console.log(
-  `platform:${process.platform}, sqlite:${sqlite_version}, vec:${vec_version}`,
-);
+  // Enable foreign key constraints (required for CASCADE deletes)
+  sqlite.run("PRAGMA foreign_keys = ON;");
 
-const db = drizzle({ client: sqlite });
-export default db;
+  const { sqlite_version, vec_version } = sqlite
+    .prepare(
+      "select sqlite_version() as sqlite_version, vec_version() as vec_version;",
+    )
+    .get() as { sqlite_version: string; vec_version: string };
+
+  console.log(
+    `platform:${process.platform}, sqlite:${sqlite_version}, vec:${vec_version}`,
+  );
+
+  const db = drizzle({ client: sqlite });
+
+  let closed = false;
+  const close = (): void => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    try {
+      sqlite.close();
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("closed")) {
+        return;
+      }
+      throw error;
+    }
+  };
+
+  return { sqlite, db, close };
+}
+
+const defaultHandle = createDb();
+
+export type DbClient = typeof defaultHandle.db;
+
+export default defaultHandle.db;
