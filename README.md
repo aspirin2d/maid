@@ -40,6 +40,13 @@ OLLAMA_EMBEDDING_MODEL=qwen3-embedding
 # Or use OpenAI
 OPENAI_API_KEY=your-api-key
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+
+# Optional: Custom SQLite library path (macOS only)
+# By default, automatically detects latest Homebrew SQLite version
+# SQLITE_LIBRARY_PATH=/path/to/libsqlite3.dylib
+
+# Optional: Custom database path
+# SQLITE_DB_PATH=./custom-db.sqlite
 ```
 
 ### 2. Run Database Migrations
