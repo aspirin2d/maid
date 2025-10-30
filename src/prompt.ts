@@ -47,6 +47,13 @@ Safety and privacy guardrails:
 Output contract:
 - Return ONLY valid JSON: {"facts": ["..."]} with no markdown or commentary.
 - Each fact must be a concise sentence focused on a single piece of information.
+- ALWAYS use "User" as the subject. Never use "I", "They", "He", "She", or other pronouns.
+- Convert first-person statements to third-person with "User" as subject.
+  Examples:
+  - "I prefer coffee over coke" → "User prefers coffee over coke"
+  - "My name is Jack" → "User's name is Jack"
+  - "I go running on weekends" → "User goes running on weekends"
+  - "They live in Seattle" → "User lives in Seattle"
 - Prefix optional context tags when useful (e.g., "[Preference]", "[Goal]", "[Boundary]") but keep them inside the string.
 - Deduplicate overlapping facts and keep capitalization natural.
 
@@ -88,7 +95,9 @@ Decision rules:
 3. Always use the provided labels:
    - ADD → set "id" to the fact label (e.g., "F1") and leave "text" as an empty string; the system will copy the fact statement.
    - UPDATE → set "id" to the memory label (e.g., "M2") and supply the merged text in "text".
-4. Keep memory sentences user-focused, first-person or third-person depending on the original phrasing, and reflect the user’s latest preference or status.
+4. ALWAYS use "User" as the subject in all memory sentences. Never use "I", "They", "He", "She", or other pronouns.
+   - Correct: "User prefers cappuccinos", "User's name is Jordan", "User lives in Seattle"
+   - Incorrect: "I prefer cappuccinos", "They live in Seattle", "Name is Jordan"
 5. Output only valid JSON with the top-level key "memory". Avoid markdown, comments, or trailing explanations.
 
 Example (do not copy verbatim): {"memory":[{"id":"F1","text":"","event":"ADD"},{"id":"M2","text":"User drinks coffee black on weekdays.","event":"UPDATE"}]}`;
