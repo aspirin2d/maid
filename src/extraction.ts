@@ -13,7 +13,6 @@ import {
   searchSimilarMemories,
   createMemory,
   updateMemory,
-  softDeleteMemory,
   type Memory,
 } from "./memory";
 import {
@@ -58,7 +57,6 @@ export interface AppliedMemoryChange {
   decision: MemoryDecision;
   createdMemoryIds: number[];
   updatedMemoryIds: number[];
-  deletedMemoryIds: number[];
 }
 
 export interface MemoryExtractionOptions {
@@ -83,7 +81,6 @@ export interface MemoryExtractionResult {
   appliedChanges: AppliedMemoryChange[];
   createdMemoryIds: number[];
   updatedMemoryIds: number[];
-  deletedMemoryIds: number[];
   markedMessageIds: number[];
   markedMessageCount: number;
 }
@@ -328,7 +325,6 @@ async function applyMemoryDecisions(args: {
   changes: AppliedMemoryChange[];
   createdMemoryIds: number[];
   updatedMemoryIds: number[];
-  deletedMemoryIds: number[];
 }> {
   const memoryByLabel = new Map(
     args.memoryReferences.map((ref) => [ref.label, ref]),
@@ -338,14 +334,12 @@ async function applyMemoryDecisions(args: {
   const changes: AppliedMemoryChange[] = [];
   const createdMemoryIds: number[] = [];
   const updatedMemoryIds: number[] = [];
-  const deletedMemoryIds: number[] = [];
 
   for (const decision of args.decisions) {
     const change: AppliedMemoryChange = {
       decision,
       createdMemoryIds: [],
       updatedMemoryIds: [],
-      deletedMemoryIds: [],
     };
 
     switch (decision.event) {
@@ -421,39 +415,17 @@ async function applyMemoryDecisions(args: {
         break;
       }
 
-      case "DELETE": {
-        const ref = memoryByLabel.get(decision.id);
-        if (!ref) {
-          throw new Error(
-            `DELETE decision referenced unknown memory label ${decision.id}`,
-          );
-        }
-
-        const success = await softDeleteMemory(ref.memoryId);
-        if (!success) {
-          throw new Error(`Failed to delete memory ${ref.memoryId}`);
-        }
-
-        ref.deleted = true;
-        ref.raw.deleted = 1;
-        ref.raw.action = "DELETE";
-        ref.action = "DELETE";
-
-        change.deletedMemoryIds.push(ref.memoryId);
-        deletedMemoryIds.push(ref.memoryId);
-
-        break;
-      }
-
       default: {
-        throw new Error(`Unsupported memory decision event`);
+        throw new Error(
+          `Unsupported memory decision event: ${decision.event}`,
+        );
       }
     }
 
     changes.push(change);
   }
 
-  return { changes, createdMemoryIds, updatedMemoryIds, deletedMemoryIds };
+  return { changes, createdMemoryIds, updatedMemoryIds };
 }
 
 export async function runMemoryExtraction(
@@ -491,18 +463,14 @@ export async function runMemoryExtraction(
     provider: llmProvider,
   });
 
-  const {
-    changes: appliedChanges,
-    createdMemoryIds,
-    updatedMemoryIds,
-    deletedMemoryIds,
-  } = await applyMemoryDecisions({
-    userId: options.userId,
-    decisions,
-    memoryReferences,
-    facts,
-    provider: memoryProvider,
-  });
+  const { changes: appliedChanges, createdMemoryIds, updatedMemoryIds } =
+    await applyMemoryDecisions({
+      userId: options.userId,
+      decisions,
+      memoryReferences,
+      facts,
+      provider: memoryProvider,
+    });
 
   const markedMessageIds = messages.map((message) => message.id);
   const markedMessageCount = markedMessageIds.length
@@ -520,7 +488,6 @@ export async function runMemoryExtraction(
     appliedChanges,
     createdMemoryIds,
     updatedMemoryIds,
-    deletedMemoryIds,
     markedMessageIds,
     markedMessageCount,
   };
