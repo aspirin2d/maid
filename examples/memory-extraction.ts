@@ -1,4 +1,48 @@
 import { eq, sql } from "drizzle-orm";
+import type { Provider } from "../src/llm";
+
+// Parse command line arguments
+function parseArgs(): { provider: Provider } {
+  const args = process.argv.slice(2);
+  let provider: Provider = "ollama";
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--help" || args[i] === "-h") {
+      console.log(`
+Usage: bun examples/memory-extraction.ts [options]
+
+Options:
+  --provider <name>  Set the LLM/embedding provider (default: ollama)
+                     Valid values: openai, ollama
+  --help, -h         Show this help message
+
+Examples:
+  bun examples/memory-extraction.ts
+  bun examples/memory-extraction.ts --provider openai
+  bun examples/memory-extraction.ts --provider ollama
+`);
+      process.exit(0);
+    }
+
+    if (args[i] === "--provider" && args[i + 1]) {
+      const value = args[i + 1];
+      if (value === "openai" || value === "ollama") {
+        provider = value;
+      } else {
+        console.error(
+          `Invalid provider: ${value}. Must be "openai" or "ollama"`,
+        );
+        process.exit(1);
+      }
+      i++;
+    }
+  }
+
+  return { provider };
+}
+
+const { provider } = parseArgs();
+console.log(`Using provider: ${provider}`);
 
 // Use an in-memory SQLite database unless the caller overrides it.
 if (!process.env.SQLITE_DB_PATH) {
@@ -154,10 +198,9 @@ async function main() {
 
     const extraction = await runMemoryExtraction({
       userId: createdUserId,
-      embeddingProvider: "ollama",
-      memoryProvider: "ollama",
-      llmProvider: "openai",
-      // Optionally, set llmModel or minConfidence here.
+      embeddingProvider: provider,
+      memoryProvider: provider,
+      llmProvider: provider,
     });
 
     console.log("=== Memory Extraction Result ===");
@@ -182,9 +225,9 @@ async function main() {
 
     const followUpExtraction = await runMemoryExtraction({
       userId: createdUserId,
-      embeddingProvider: "ollama",
-      memoryProvider: "ollama",
-      llmProvider: "openai",
+      embeddingProvider: provider,
+      memoryProvider: provider,
+      llmProvider: provider,
     });
 
     console.log("=== Memory Extraction Result After Additional Messages ===");
