@@ -22,6 +22,8 @@ import {
   deleteMemoriesOlderThan,
   searchSimilarMemories,
 } from "./src/db/memory";
+import db from "./src/db/index";
+import { sql } from "drizzle-orm";
 
 async function main() {
   console.log("=== Testing Memory CRUD Functions with Embeddings ===\n");
@@ -164,13 +166,55 @@ async function main() {
   const finalStats = await getMemoryStats(testUserId);
   console.log(`   Final stats: ${JSON.stringify(finalStats, null, 2)}\n`);
 
-  // Test 18: Purge deleted memories
-  console.log("18. Purging deleted memories...");
+  // Test 18: Cascade delete - verify vector embedding is deleted with memory
+  console.log("18. Testing cascade delete (memory -> vector embedding)...");
+  console.log("   Creating test memory for cascade delete...");
+  const cascadeTestMemoryId = await createMemory(
+    {
+      userId: testUserId,
+      content: "This memory will test cascade delete",
+      action: "ADD",
+    },
+    provider,
+  );
+  console.log(`   Created memory ID: ${cascadeTestMemoryId}`);
+
+  // Verify vector embedding exists
+  const vectorBeforeDelete = await db.all<{ memory_id: string; payload: string }>(
+    sql`SELECT memory_id, payload FROM vec_memories WHERE memory_id = ${String(cascadeTestMemoryId)}`,
+  );
+  console.log(
+    `   ✓ Vector embedding exists: ${vectorBeforeDelete.length > 0 ? "YES" : "NO"}`,
+  );
+  if (vectorBeforeDelete.length > 0) {
+    console.log(`     Payload: "${vectorBeforeDelete[0]?.payload}"`);
+  }
+
+  // Hard delete the memory
+  console.log("   Hard deleting memory...");
+  await hardDeleteMemory(cascadeTestMemoryId);
+
+  // Verify vector embedding is also deleted
+  const vectorAfterDelete = await db.all<{ memory_id: string }>(
+    sql`SELECT memory_id FROM vec_memories WHERE memory_id = ${String(cascadeTestMemoryId)}`,
+  );
+  console.log(
+    `   ✓ Vector embedding deleted: ${vectorAfterDelete.length === 0 ? "YES" : "NO"}`,
+  );
+
+  if (vectorAfterDelete.length === 0) {
+    console.log("   ✅ Cascade delete working correctly!\n");
+  } else {
+    console.log("   ❌ WARNING: Cascade delete failed - vector still exists!\n");
+  }
+
+  // Test 19: Purge deleted memories
+  console.log("19. Purging deleted memories...");
   const purgedCount = await purgeDeletedMemories(testUserId);
   console.log(`   Purged ${purgedCount} deleted memories\n`);
 
-  // Test 19: Hard delete remaining memories
-  console.log("19. Hard deleting all remaining test memories...");
+  // Test 20: Hard delete remaining memories
+  console.log("20. Hard deleting all remaining test memories...");
   const remainingMemories = await getActiveMemories(testUserId);
   if (remainingMemories.length > 0) {
     const hardDeletedCount = await bulkHardDeleteMemories(
