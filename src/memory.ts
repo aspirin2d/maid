@@ -595,7 +595,7 @@ export async function getMemoryStats(userId: number): Promise<{
 
 /**
  * Update memory content and track the change with embedding regeneration
- * Optimized: Uses subquery to get previous content in single UPDATE statement
+ * Uses a Common Table Expression (CTE) to atomically capture previous content
  */
 export async function updateMemoryContent(
   memoryId: number,
@@ -604,13 +604,16 @@ export async function updateMemoryContent(
 ): Promise<boolean> {
   const updatedAt = new Date();
 
-  // Optimized: Single UPDATE with subquery to get previous content
+  // Use CTE to atomically capture previous content and update in one transaction
   const result = db.all<{ id: number }>(
     sql`
+      WITH old_memory AS (
+        SELECT content FROM memory WHERE id = ${memoryId}
+      )
       UPDATE memory
       SET
         content = ${newContent},
-        previous_content = (SELECT content FROM memory WHERE id = ${memoryId}),
+        previous_content = (SELECT content FROM old_memory),
         action = 'UPDATE',
         updated_at = ${updatedAt.getTime()}
       WHERE id = ${memoryId}
