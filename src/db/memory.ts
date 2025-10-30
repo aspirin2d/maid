@@ -81,7 +81,7 @@ async function upsertMemoryEmbedding(
 }
 
 /**
- * Search for similar memories using vector similarity
+ * Search for similar memories using vector similarity with optimized INNER JOIN
  */
 export async function searchSimilarMemories(
   query: string,
@@ -97,47 +97,30 @@ export async function searchSimilarMemories(
   // Generate embedding for the query
   const queryEmbedding = await embedText(provider, query);
 
-  // Search for similar vectors
-  const results = await db.all<{ memory_id: string; distance: number }>(
+  // Optimized: Use INNER JOIN to fetch memory rows and distances in a single query
+  const results = await db.all<Memory & { distance: number }>(
     sql`
-      SELECT memory_id, distance
-      FROM vec_memories
-      WHERE embedding MATCH ${JSON.stringify(queryEmbedding)}
-        AND k = ${limit * 2}
-      ORDER BY distance
+      SELECT
+        m.id,
+        m.user_id,
+        m.content,
+        m.previous_content,
+        m.action,
+        m.deleted,
+        m.created_at,
+        m.updated_at,
+        v.distance
+      FROM vec_memories v
+      INNER JOIN memory m ON CAST(v.memory_id AS INTEGER) = m.id
+      WHERE v.embedding MATCH ${JSON.stringify(queryEmbedding)}
+        AND m.user_id = ${userId}
+        ${includeDeleted ? sql`` : sql`AND m.deleted = 0`}
+        AND k = ${limit}
+      ORDER BY v.distance
     `,
   );
 
-  if (results.length === 0) {
-    return [];
-  }
-
-  // Get the actual memory records
-  const memoryIds = results.map((r) => parseInt(r.memory_id, 10));
-  const memories = await getMemoriesByIds(memoryIds, includeDeleted);
-
-  // Filter by userId and deleted status
-  const filteredMemories = memories.filter((m) => {
-    if (m.userId !== userId) return false;
-    if (!includeDeleted && m.deleted === 1) return false;
-    return true;
-  });
-
-  // Create a map of memory_id to distance
-  const distanceMap = new Map(
-    results.map((r) => [parseInt(r.memory_id, 10), r.distance]),
-  );
-
-  // Combine memories with their distances
-  const memoriesWithDistance = filteredMemories
-    .map((memory) => ({
-      ...memory,
-      distance: distanceMap.get(memory.id) ?? Infinity,
-    }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, limit);
-
-  return memoriesWithDistance;
+  return results;
 }
 
 // ============
