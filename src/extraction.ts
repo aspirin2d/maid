@@ -521,14 +521,52 @@ export async function runMemoryExtraction(
 
     // Step 4: Decide memory actions
     console.log(`[Memory Extraction] Deciding memory actions`);
-    decisions = await decideMemoryActions({
-      facts,
-      memoryReferences,
-      model: options.llmModel,
-      provider: llmProvider,
-    });
+
+    // Separate facts with and without similar memories
+    const factsWithSimilarMemories: ExtractedFact[] = [];
+    const factsWithoutSimilarMemories: ExtractedFact[] = [];
+
+    for (const context of factContexts) {
+      if (context.similarMemoryLabels.length === 0) {
+        factsWithoutSimilarMemories.push(context.fact);
+      } else {
+        factsWithSimilarMemories.push(context.fact);
+      }
+    }
+
     console.log(
-      `[Memory Extraction] Generated ${decisions.length} memory decisions`,
+      `[Memory Extraction] ${factsWithoutSimilarMemories.length} facts without similar memories will be added directly`,
+    );
+    console.log(
+      `[Memory Extraction] ${factsWithSimilarMemories.length} facts with similar memories need LLM decision`,
+    );
+
+    // Create ADD decisions for facts without similar memories
+    const directAddDecisions: MemoryDecision[] = factsWithoutSimilarMemories.map(
+      (fact) => ({
+        event: "ADD" as const,
+        id: fact.factId,
+        text: fact.statement,
+        rationale: "No similar memories found, adding fact directly",
+      }),
+    );
+
+    // Only call LLM for facts that have similar memories
+    let llmDecisions: MemoryDecision[] = [];
+    if (factsWithSimilarMemories.length > 0) {
+      llmDecisions = await decideMemoryActions({
+        facts: factsWithSimilarMemories,
+        memoryReferences,
+        model: options.llmModel,
+        provider: llmProvider,
+      });
+    }
+
+    // Combine direct ADD decisions with LLM decisions
+    decisions = [...directAddDecisions, ...llmDecisions];
+
+    console.log(
+      `[Memory Extraction] Generated ${decisions.length} memory decisions (${directAddDecisions.length} direct, ${llmDecisions.length} from LLM)`,
     );
 
     // Step 5: Apply memory decisions (within transaction)
