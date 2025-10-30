@@ -83,7 +83,7 @@ Decision rules:
 1. For each fact, determine whether it should create, adjust, or remove a memory.
    - Prefer ADD when the fact is new, high-signal, and not already captured.
    - Prefer UPDATE when the fact refines or corrects an existing memory; combine old and new details into a single clear sentence.
-   - Prefer UPDATE new facts conflict with existing memories, overwrite the old memories with the new facts (while referencing the old memories).
+   - Prefer UPDATE when new facts conflict with existing memories, overwrite the old memories with the new facts.
 2. Never emit redundant operations. If an existing memory already matches the latest fact, omit it.
 3. Always use the provided labels:
    - ADD → set "id" to the fact label (e.g., "F1") and leave "text" as an empty string; the system will copy the fact statement.

@@ -118,19 +118,19 @@ async function cleanupUserData(userId: number | null) {
   }
 
   try {
-    const allMemories = await listMemories({
-      userId,
-      includeDeleted: true,
-      orderBy: "createdAt",
-      orderDir: "asc",
-    });
-
-    for (const record of allMemories) {
-      db.run(
-        sql`DELETE FROM vec_memories WHERE memory_id = ${String(record.id)}`,
-      );
-    }
-
+    // const allMemories = await listMemories({
+    //   userId,
+    //   includeDeleted: true,
+    //   orderBy: "createdAt",
+    //   orderDir: "asc",
+    // });
+    //
+    // for (const record of allMemories) {
+    //   db.run(
+    //     sql`DELETE FROM vec_memories WHERE memory_id = ${String(record.id)}`,
+    //   );
+    // }
+    //
     await db.delete(user).where(eq(user.id, userId));
   } catch (error) {
     console.error("Cleanup failed:", error);
@@ -157,7 +157,7 @@ async function main() {
       userId: createdUserId,
       embeddingProvider: "ollama",
       memoryProvider: "ollama",
-      llmProvider: "ollama",
+      llmProvider: "openai",
       // Optionally, set llmModel or minConfidence here.
     });
 
@@ -186,7 +186,7 @@ async function main() {
       userId: createdUserId,
       embeddingProvider: "ollama",
       memoryProvider: "ollama",
-      llmProvider: "ollama",
+      llmProvider: "openai",
     });
 
     console.log("=== Memory Extraction Result After Additional Messages ===");
