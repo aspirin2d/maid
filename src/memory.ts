@@ -10,7 +10,7 @@ import {
   type InferSelectModel,
   type InferInsertModel,
 } from "drizzle-orm";
-import db from "./db/index";
+import db, { sqlite } from "./db/index";
 import { memory } from "./db/schema";
 import { embedText, type Provider } from "./llm";
 
@@ -126,7 +126,7 @@ export async function searchSimilarMemories(
         v.distance
       FROM vec_memories v
       INNER JOIN memory m ON CAST(v.memory_id AS INTEGER) = m.id
-      WHERE v.embedding MATCH ${JSON.stringify(queryEmbedding)}
+      WHERE v.embedding MATCH ${new Float32Array(queryEmbedding)}
         AND m.user_id = ${userId}
         ${includeDeleted ? sql`` : sql`AND m.deleted = 0`}
         AND k = ${limit}

@@ -1,12 +1,12 @@
+import { z, type ZodType } from "zod";
+
+import { listMessages, markMessagesExtracted, type Message } from "./message";
 import {
-  listMessages,
-  markMessagesExtracted,
-  type Message,
-} from "./message";
-import {
-  embedText,
   getOpenAI,
+  getOllama,
   DEFAULT_OPENAI_MODEL,
+  DEFAULT_OLLAMA_MODEL,
+  OLLAMA_KEEP_ALIVE,
   type Provider,
 } from "./llm";
 import {
@@ -16,6 +16,14 @@ import {
   softDeleteMemory,
   type Memory,
 } from "./memory";
+import {
+  FactRetrievalSchema,
+  MemoryUpdateSchema,
+  getFactRetrievalMessages,
+  getUpdateMemoryMessages,
+  parseMessages,
+  removeCodeBlocks,
+} from "./prompt";
 
 export type ExtractedFact = {
   factId: string;
@@ -23,10 +31,6 @@ export type ExtractedFact = {
   confidence: number;
   sourceMessageIds: number[];
   category?: string;
-};
-
-export type FactExtractionResponse = {
-  facts: ExtractedFact[];
 };
 
 export type MemoryReference = {
@@ -44,19 +48,11 @@ export type FactMatchContext = {
   similarMemoryLabels: string[];
 };
 
-export type MemoryDecisionAction = "ADD" | "UPDATE" | "DELETE";
+export type MemoryDecision = z.infer<
+  typeof MemoryUpdateSchema
+>["memory"][number];
 
-export type MemoryDecision = {
-  factId: string;
-  action: MemoryDecisionAction;
-  targetMemoryLabels?: string[];
-  newContent?: string;
-  reason?: string;
-};
-
-export type MemoryDecisionResponse = {
-  decisions: MemoryDecision[];
-};
+export type MemoryDecisionAction = MemoryDecision["event"];
 
 export interface AppliedMemoryChange {
   decision: MemoryDecision;
@@ -70,6 +66,7 @@ export interface MemoryExtractionOptions {
   messageLimit?: number;
   similarityLimit?: number;
   embeddingProvider?: Provider;
+  llmProvider?: Provider;
   llmModel?: string;
   minConfidence?: number;
   memoryProvider?: Provider;
@@ -93,129 +90,127 @@ export interface MemoryExtractionResult {
 
 const DEFAULT_SIMILARITY_LIMIT = 3;
 
-function formatMessagesForPrompt(messages: Message[]): string {
-  return messages
-    .map((message, index) => {
-      const createdAt = message.createdAt
-        ? new Date(message.createdAt).toISOString()
-        : "unknown";
-      return `#${index + 1} [${message.role.toUpperCase()}|id:${message.id}|${createdAt}]\n${message.content.trim()}`;
-    })
-    .join("\n\n");
-}
+type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
 
-function buildFactExtractionPrompt(messages: Message[]): string {
-  const formattedConversation = formatMessagesForPrompt(messages);
-  return [
-    "You are an AI tasked with extracting stable, long-term facts about the user from a conversation.",
-    "Only extract information that is likely to remain true beyond this specific exchange.",
-    "Avoid speculative or time-sensitive statements.",
-    "Whenever possible, ground each fact in specific message ids.",
-    "",
-    "Return concise and atomic fact statements that could be stored as long-term memory.",
-    "",
-    "Conversation:",
-    formattedConversation,
-  ].join("\n");
-}
-
-const FACT_EXTRACTION_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    facts: {
-      type: "array",
-      description:
-        "List of extracted facts describing enduring user information or preferences.",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          factId: {
-            type: "string",
-            description:
-              "Stable identifier you assign for the fact within this response.",
-          },
-          statement: {
-            type: "string",
-            description:
-              "Single-sentence declarative fact phrased in third person about the user.",
-          },
-          confidence: {
-            type: "number",
-            minimum: 0,
-            maximum: 1,
-            description: "Confidence score between 0 and 1.",
-          },
-          sourceMessageIds: {
-            type: "array",
-            minItems: 1,
-            items: {
-              type: "integer",
-            },
-            description:
-              "Message ids from the conversation that support this fact.",
-          },
-          category: {
-            type: "string",
-            description:
-              "Optional category label such as preference, profile, goal, habit, or fact.",
-          },
-        },
-        required: ["factId", "statement", "confidence", "sourceMessageIds"],
-      },
-    },
-  },
-  required: ["facts"],
-} as const;
-
-async function callStructuredJson<T>(args: {
-  prompt: string;
-  schemaName: string;
-  schema: object;
-  model?: string;
-}): Promise<T> {
-  const client = getOpenAI();
-  const response = await client.responses.parse({
-    model: args.model ?? DEFAULT_OPENAI_MODEL,
-    input: args.prompt,
-    response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: args.schemaName,
-        schema: args.schema,
-        strict: true,
-      },
-    },
+function formatMessagesForConversation(messages: Message[]): string[] {
+  return messages.map((message, index) => {
+    const createdAt = message.createdAt
+      ? new Date(message.createdAt).toISOString()
+      : "unknown";
+    const cleanedContent = removeCodeBlocks(message.content).trim();
+    return `#${index + 1} [${message.role.toUpperCase()}|id:${message.id}|${createdAt}]\n${cleanedContent}`;
   });
+}
 
-  if (!response.output_parsed) {
-    throw new Error("Failed to parse structured response from model");
+function buildFactRetrievalMessages(messages: Message[]): ChatMessage[] {
+  const conversationLines = formatMessagesForConversation(messages);
+  const parsedConversation = parseMessages(conversationLines);
+  const [systemPrompt, userPrompt] =
+    getFactRetrievalMessages(parsedConversation);
+  return [
+    { role: "system", content: systemPrompt },
+    { role: "user", content: userPrompt },
+  ];
+}
+
+function buildMemoryUpdateMessages(
+  memoryReferences: MemoryReference[],
+  facts: ExtractedFact[],
+): ChatMessage[] {
+  const snapshot = memoryReferences
+    .filter((ref) => (ref.content ?? "").trim().length > 0)
+    .map((ref) => ({ id: ref.label, text: ref.content ?? "" }));
+  const factSummaries = facts
+    .map((fact) => ({ id: fact.factId, text: fact.statement }))
+    .filter((fact) => fact.text.trim().length > 0);
+  const prompt = getUpdateMemoryMessages(snapshot, factSummaries);
+  return [{ role: "user", content: prompt }];
+}
+
+async function callStructuredJson<Schema extends ZodType>(args: {
+  messages: ChatMessage[];
+  schemaName: string;
+  schema: Schema;
+  model?: string;
+  provider?: Provider;
+}): Promise<z.infer<Schema>> {
+  if (!args.messages.length) {
+    throw new Error("Structured call requires at least one message");
   }
 
-  return response.output_parsed as T;
+  const provider = args.provider ?? "ollama";
+  const jsonSchema = z.toJSONSchema(args.schema);
+
+  if (provider === "openai") {
+    const client = getOpenAI();
+    const response = await client.responses.parse({
+      model: args.model ?? DEFAULT_OPENAI_MODEL,
+      input: args.messages,
+      text: {
+        format: {
+          type: "json_schema",
+          name: args.schemaName,
+          schema: jsonSchema,
+        },
+      },
+    });
+
+    if (!response.output_parsed) {
+      throw new Error("Failed to parse structured response from model");
+    }
+
+    return args.schema.parse(response.output_parsed);
+  }
+
+  const client = getOllama();
+  const response = await client.chat({
+    model: args.model ?? DEFAULT_OLLAMA_MODEL,
+    messages: args.messages,
+    format: jsonSchema,
+    keep_alive: OLLAMA_KEEP_ALIVE,
+  });
+
+  const content = response.message?.content?.trim();
+  if (!content) {
+    throw new Error("Failed to receive structured content from Ollama");
+  }
+
+  const parsed = JSON.parse(content);
+  return args.schema.parse(parsed);
 }
 
 async function extractFactsFromConversation(args: {
   messages: Message[];
   model?: string;
   minConfidence?: number;
+  provider?: Provider;
 }): Promise<ExtractedFact[]> {
   if (args.messages.length === 0) {
     return [];
   }
 
-  const prompt = buildFactExtractionPrompt(args.messages);
-  const structured = await callStructuredJson<FactExtractionResponse>({
-    prompt,
-    schemaName: "conversation_fact_extraction",
-    schema: FACT_EXTRACTION_SCHEMA,
+  const promptMessages = buildFactRetrievalMessages(args.messages);
+  const structured = await callStructuredJson({
+    messages: promptMessages,
+    schemaName: "conversation_fact_retrieval",
+    schema: FactRetrievalSchema,
     model: args.model,
+    provider: args.provider,
   });
 
-  const minConfidence = args.minConfidence ?? 0.4;
+  const uniqueSourceIds = Array.from(
+    new Set(args.messages.map((message) => message.id)),
+  );
 
-  return structured.facts.filter((fact) => fact.confidence >= minConfidence);
+  return structured.facts.map((statement, index) => ({
+    factId: `F${index + 1}`,
+    statement,
+    confidence: 1,
+    sourceMessageIds: uniqueSourceIds,
+  }));
 }
 
 async function fetchPendingMessages(
@@ -248,14 +243,11 @@ async function buildSimilarityContext(args: {
   const factContexts: FactMatchContext[] = [];
 
   for (const fact of args.facts) {
-    const embedding = await embedText(args.embeddingProvider, fact.statement);
-
     const similarMemories = await searchSimilarMemories(fact.statement, {
       userId: args.userId,
       provider: args.embeddingProvider,
       limit: args.similarityLimit,
-      includeDeleted: true,
-      embedding,
+      includeDeleted: false,
     });
 
     const labelsForFact: string[] = [];
@@ -294,145 +286,54 @@ async function buildSimilarityContext(args: {
   return { factContexts, memoryReferences, labelToMemoryId };
 }
 
-function buildDecisionPrompt(args: {
-  facts: ExtractedFact[];
-  factContexts: FactMatchContext[];
-  memoryReferences: MemoryReference[];
-}): string {
-  const factsSection = args.facts
-    .map(
-      (fact) =>
-        `- Fact ${fact.factId}: "${fact.statement}" (confidence ${fact.confidence.toFixed(2)})` +
-        (fact.category ? ` [${fact.category}]` : ""),
-    )
-    .join("\n");
-
-  const contextLookup = new Map(
-    args.factContexts.map((ctx) => [ctx.fact.factId, ctx.similarMemoryLabels]),
-  );
-
-  const perFactLinks = args.facts
-    .map((fact) => {
-      const labels = contextLookup.get(fact.factId) ?? [];
-      if (labels.length === 0) {
-        return `- Fact ${fact.factId}: no similar memory labels.`;
-      }
-      return `- Fact ${fact.factId}: similar memories -> ${labels.join(", ")}.`;
-    })
-    .join("\n");
-
-  const memorySection = args.memoryReferences
-    .map((ref) => {
-      const status = ref.deleted ? "deleted" : (ref.action ?? "unknown");
-      const distance = Number.isFinite(ref.distance)
-        ? ref.distance.toFixed(4)
-        : "n/a";
-      return `- ${ref.label}: (memory #${ref.memoryId}) [${status}] distance=${distance}\n  Content: ${ref.content ?? "<empty>"}`;
-    })
-    .join("\n");
-
-  return [
-    "You manage a user's long-term memory store.",
-    "For each extracted fact, decide whether to ADD a new memory, UPDATE an existing memory, or DELETE an obsolete one.",
-    "Use the provided memory labels (M1, M2, ...) instead of raw ids when referencing existing memories.",
-    "",
-    "Facts:",
-    factsSection || "(none)",
-    "",
-    "Similar memory mapping per fact:",
-    perFactLinks || "(no overlaps)",
-    "",
-    "Existing labeled memories:",
-    memorySection || "(none)",
-    "",
-    "Rules:",
-    "- ADD: Create when no suitable memory exists.",
-    "- UPDATE: Choose when fact refines or corrects a labeled memory; include labels to adjust.",
-    "- DELETE: Use when a labeled memory is contradicted by the fact.",
-    "Provide a short reason for each decision.",
-  ].join("\n");
-}
-
-const MEMORY_DECISION_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    decisions: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        properties: {
-          factId: {
-            type: "string",
-            description: "The fact identifier this decision corresponds to.",
-          },
-          action: {
-            type: "string",
-            enum: ["ADD", "UPDATE", "DELETE"],
-          },
-          targetMemoryLabels: {
-            type: "array",
-            description:
-              "Labels of existing memories affected by UPDATE or DELETE actions.",
-            items: {
-              type: "string",
-            },
-          },
-          newContent: {
-            type: "string",
-            description:
-              "Rewritten memory content for ADD or UPDATE actions. Must be concise.",
-          },
-          reason: {
-            type: "string",
-            description: "Short rationale for the chosen action.",
-          },
-        },
-        required: ["factId", "action"],
-      },
-    },
-  },
-  required: ["decisions"],
-} as const;
-
 async function decideMemoryActions(args: {
   facts: ExtractedFact[];
-  factContexts: FactMatchContext[];
   memoryReferences: MemoryReference[];
   model?: string;
+  provider?: Provider;
 }): Promise<MemoryDecision[]> {
-  if (args.facts.length === 0) {
+  if (args.facts.length === 0 && args.memoryReferences.length === 0) {
     return [];
   }
 
-  const prompt = buildDecisionPrompt(args);
-  const structured = await callStructuredJson<MemoryDecisionResponse>({
-    prompt,
-    schemaName: "memory_action_planning",
-    schema: MEMORY_DECISION_SCHEMA,
+  const messages = buildMemoryUpdateMessages(args.memoryReferences, args.facts);
+  const decisionPrompt = messages
+    .filter((message) => message.role === "user")
+    .map((message) => message.content)
+    .join("\n\n");
+
+  if (decisionPrompt.trim().length > 0) {
+    console.log("=== Memory Update Prompt ===");
+    console.log(decisionPrompt);
+    console.log("=== End Memory Update Prompt ===");
+  }
+  const structured = await callStructuredJson({
+    messages,
+    schemaName: "memory_update_planning",
+    schema: MemoryUpdateSchema,
     model: args.model,
+    provider: args.provider,
   });
 
-  return structured.decisions;
+  return structured.memory;
 }
 
 async function applyMemoryDecisions(args: {
   userId: number;
   decisions: MemoryDecision[];
-  facts: ExtractedFact[];
   memoryReferences: MemoryReference[];
   provider: Provider;
+  facts: ExtractedFact[];
 }): Promise<{
   changes: AppliedMemoryChange[];
   createdMemoryIds: number[];
   updatedMemoryIds: number[];
   deletedMemoryIds: number[];
 }> {
-  const factById = new Map(args.facts.map((fact) => [fact.factId, fact]));
   const memoryByLabel = new Map(
     args.memoryReferences.map((ref) => [ref.label, ref]),
   );
+  const factByLabel = new Map(args.facts.map((fact) => [fact.factId, fact]));
 
   const changes: AppliedMemoryChange[] = [];
   const createdMemoryIds: number[] = [];
@@ -447,13 +348,16 @@ async function applyMemoryDecisions(args: {
       deletedMemoryIds: [],
     };
 
-    switch (decision.action) {
+    switch (decision.event) {
       case "ADD": {
-        const fact = factById.get(decision.factId);
-        const content = (decision.newContent ?? fact?.statement ?? "").trim();
+        const referencedFact = decision.id
+          ? factByLabel.get(decision.id)
+          : undefined;
+
+        let content = referencedFact?.statement.trim();
         if (!content) {
           throw new Error(
-            `ADD decision for fact ${decision.factId} is missing content`,
+            `ADD decision for label ${decision.id} is missing text content and does not reference a known fact`,
           );
         }
 
@@ -473,96 +377,76 @@ async function applyMemoryDecisions(args: {
       }
 
       case "UPDATE": {
-        const labels = decision.targetMemoryLabels ?? [];
-        if (labels.length === 0) {
+        const ref = memoryByLabel.get(decision.id);
+        if (!ref) {
           throw new Error(
-            `UPDATE decision for fact ${decision.factId} is missing targetMemoryLabels`,
+            `UPDATE decision referenced unknown memory label ${decision.id}`,
           );
         }
 
-        const fact = factById.get(decision.factId);
-        const newContent = (decision.newContent ?? fact?.statement ?? "").trim();
+        const newContent = (decision.text ?? "").trim();
         if (!newContent) {
           throw new Error(
-            `UPDATE decision for fact ${decision.factId} is missing new content`,
+            `UPDATE decision for memory ${decision.id} is missing text content`,
           );
         }
 
-        for (const label of labels) {
-          const ref = memoryByLabel.get(label);
-          if (!ref) {
-            throw new Error(
-              `UPDATE decision referenced unknown memory label ${label}`,
-            );
-          }
-
-          const previousContent = ref.content ?? ref.raw.content ?? null;
-          const success = await updateMemory(
-            ref.memoryId,
-            {
-              content: newContent,
-              prevContent: previousContent ?? undefined,
-              action: "UPDATE",
-              deleted: 0,
-            },
-            args.provider,
-          );
-
-          if (!success) {
-            throw new Error(`Failed to update memory ${ref.memoryId}`);
-          }
-
-          ref.raw.prevContent = previousContent;
-          ref.raw.content = newContent;
-          ref.raw.deleted = 0;
-          ref.raw.action = "UPDATE";
-          ref.content = newContent;
-          ref.deleted = false;
-          ref.action = "UPDATE";
-
-          change.updatedMemoryIds.push(ref.memoryId);
-          updatedMemoryIds.push(ref.memoryId);
+        const previousContent = ref.content ?? ref.raw.content ?? null;
+        const success = await updateMemory(
+          ref.memoryId,
+          {
+            content: newContent,
+            prevContent: previousContent ?? undefined,
+            action: "UPDATE",
+            deleted: 0,
+          },
+          args.provider,
+        );
+        if (!success) {
+          throw new Error(`Failed to update memory ${ref.memoryId}`);
         }
+
+        ref.raw.prevContent = previousContent;
+        ref.raw.content = newContent;
+        ref.raw.deleted = 0;
+        ref.raw.action = "UPDATE";
+        ref.raw.updatedAt = new Date();
+        ref.content = newContent;
+        ref.deleted = false;
+        ref.action = "UPDATE";
+
+        change.updatedMemoryIds.push(ref.memoryId);
+        updatedMemoryIds.push(ref.memoryId);
 
         break;
       }
 
       case "DELETE": {
-        const labels = decision.targetMemoryLabels ?? [];
-        if (labels.length === 0) {
+        const ref = memoryByLabel.get(decision.id);
+        if (!ref) {
           throw new Error(
-            `DELETE decision for fact ${decision.factId} is missing targetMemoryLabels`,
+            `DELETE decision referenced unknown memory label ${decision.id}`,
           );
         }
 
-        for (const label of labels) {
-          const ref = memoryByLabel.get(label);
-          if (!ref) {
-            throw new Error(
-              `DELETE decision referenced unknown memory label ${label}`,
-            );
-          }
-
-          const success = await softDeleteMemory(ref.memoryId);
-          if (!success) {
-            throw new Error(`Failed to delete memory ${ref.memoryId}`);
-          }
-
-          ref.deleted = true;
-          ref.raw.deleted = 1;
-          ref.raw.action = "DELETE";
-          ref.action = "DELETE";
-
-          change.deletedMemoryIds.push(ref.memoryId);
-          deletedMemoryIds.push(ref.memoryId);
+        const success = await softDeleteMemory(ref.memoryId);
+        if (!success) {
+          throw new Error(`Failed to delete memory ${ref.memoryId}`);
         }
+
+        ref.deleted = true;
+        ref.raw.deleted = 1;
+        ref.raw.action = "DELETE";
+        ref.action = "DELETE";
+
+        change.deletedMemoryIds.push(ref.memoryId);
+        deletedMemoryIds.push(ref.memoryId);
 
         break;
       }
 
       default: {
-        const exhaustive: never = decision.action;
-        throw new Error(`Unsupported memory decision action ${exhaustive}`);
+        throw new Error(`Unsupported memory decision event`);
       }
     }
 
@@ -577,6 +461,7 @@ export async function runMemoryExtraction(
 ): Promise<MemoryExtractionResult> {
   const embeddingProvider = options.embeddingProvider ?? "ollama";
   const memoryProvider = options.memoryProvider ?? embeddingProvider;
+  const llmProvider = options.llmProvider ?? "ollama";
   const similarityLimit = options.similarityLimit ?? DEFAULT_SIMILARITY_LIMIT;
 
   const messages = await fetchPendingMessages(
@@ -588,6 +473,7 @@ export async function runMemoryExtraction(
     messages,
     model: options.llmModel,
     minConfidence: options.minConfidence,
+    provider: llmProvider,
   });
 
   const { factContexts, memoryReferences, labelToMemoryId } =
@@ -600,9 +486,9 @@ export async function runMemoryExtraction(
 
   const decisions = await decideMemoryActions({
     facts,
-    factContexts,
     memoryReferences,
     model: options.llmModel,
+    provider: llmProvider,
   });
 
   const {
@@ -613,8 +499,8 @@ export async function runMemoryExtraction(
   } = await applyMemoryDecisions({
     userId: options.userId,
     decisions,
-    facts,
     memoryReferences,
+    facts,
     provider: memoryProvider,
   });
 

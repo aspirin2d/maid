@@ -64,4 +64,5 @@ const defaultHandle = createDb();
 
 export type DbClient = typeof defaultHandle.db;
 
+export const sqlite = defaultHandle.sqlite;
 export default defaultHandle.db;
