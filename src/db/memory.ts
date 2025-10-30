@@ -481,28 +481,26 @@ export async function getDeletedMemories(
 }
 
 /**
- * Count total memories for a user
+ * Count total memories for a user using SQL COUNT(*)
  */
 export async function countUserMemories(
   userId: string,
   includeDeleted = false,
 ): Promise<number> {
-  const conditions = [eq(memory.userId, userId)];
+  const result = await db.all<{ count: number }>(
+    sql`
+      SELECT COUNT(*) as count
+      FROM memory
+      WHERE user_id = ${userId}
+        ${includeDeleted ? sql`` : sql`AND deleted = 0`}
+    `,
+  );
 
-  if (!includeDeleted) {
-    conditions.push(eq(memory.deleted, 0));
-  }
-
-  const result = await db
-    .select()
-    .from(memory)
-    .where(and(...conditions));
-
-  return result.length;
+  return result[0]?.count ?? 0;
 }
 
 /**
- * Get memory statistics for a user
+ * Get memory statistics for a user using SQL aggregation
  */
 export async function getMemoryStats(userId: string): Promise<{
   total: number;
@@ -510,32 +508,56 @@ export async function getMemoryStats(userId: string): Promise<{
   deleted: number;
   byAction: Record<string, number>;
 }> {
-  const allMemories = await db
-    .select()
-    .from(memory)
-    .where(eq(memory.userId, userId));
+  // Get counts by deleted status in a single query
+  const statusResults = await db.all<{ deleted: number; count: number }>(
+    sql`
+      SELECT deleted, COUNT(*) as count
+      FROM memory
+      WHERE user_id = ${userId}
+      GROUP BY deleted
+    `,
+  );
 
+  // Get counts by action type in a single query
+  const actionResults = await db.all<{ action: string; count: number }>(
+    sql`
+      SELECT action, COUNT(*) as count
+      FROM memory
+      WHERE user_id = ${userId} AND action IS NOT NULL
+      GROUP BY action
+    `,
+  );
+
+  // Process status results
+  let total = 0;
+  let active = 0;
+  let deleted = 0;
+
+  for (const row of statusResults) {
+    const count = row.count;
+    total += count;
+    if (row.deleted === 0) {
+      active = count;
+    } else {
+      deleted = count;
+    }
+  }
+
+  // Process action results
   const byAction: Record<string, number> = {
     ADD: 0,
     UPDATE: 0,
     DELETE: 0,
   };
-  let active = 0;
-  let deleted = 0;
 
-  for (const mem of allMemories) {
-    if (mem.action) {
-      byAction[mem.action] = (byAction[mem.action] || 0) + 1;
-    }
-    if (mem.deleted === 0) {
-      active++;
-    } else {
-      deleted++;
+  for (const row of actionResults) {
+    if (row.action) {
+      byAction[row.action] = row.count;
     }
   }
 
   return {
-    total: allMemories.length,
+    total,
     active,
     deleted,
     byAction,
@@ -544,29 +566,28 @@ export async function getMemoryStats(userId: string): Promise<{
 
 /**
  * Update memory content and track the change with embedding regeneration
- * Creates a new version with action="UPDATE" and stores previous content
+ * Optimized: Uses subquery to get previous content in single UPDATE statement
  */
 export async function updateMemoryContent(
   memoryId: number,
   newContent: string,
   provider: Provider = "ollama",
 ): Promise<boolean> {
-  const existing = await getMemory(memoryId);
+  const updatedAt = new Date();
 
-  if (!existing) {
-    throw new Error(`Memory with ID ${memoryId} not found`);
-  }
-
-  const result = await db
-    .update(memory)
-    .set({
-      content: newContent,
-      prevContent: existing.content,
-      action: "UPDATE",
-      updatedAt: new Date(),
-    })
-    .where(eq(memory.id, memoryId))
-    .returning({ id: memory.id });
+  // Optimized: Single UPDATE with subquery to get previous content
+  const result = await db.all<{ id: number }>(
+    sql`
+      UPDATE memory
+      SET
+        content = ${newContent},
+        previous_content = (SELECT content FROM memory WHERE id = ${memoryId}),
+        action = 'UPDATE',
+        updated_at = ${updatedAt.getTime()}
+      WHERE id = ${memoryId}
+      RETURNING id
+    `,
+  );
 
   // Regenerate embedding with new content
   if (result.length > 0) {
