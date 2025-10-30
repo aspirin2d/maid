@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import { Hono } from "hono";
 import db from "./db";
 import { test } from "./db/schema";
@@ -13,6 +11,6 @@ app.get("/", (c) => {
 });
 
 export default {
-  port: process.env.PORT!,
+  port: process.env.PORT || 3000,
   fetch: app.fetch,
 };

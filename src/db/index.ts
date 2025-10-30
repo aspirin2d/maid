@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import * as sqliteVec from "sqlite-vec";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";

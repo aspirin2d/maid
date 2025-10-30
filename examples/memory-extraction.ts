@@ -1,4 +1,3 @@
-import "dotenv/config";
 import { eq, sql } from "drizzle-orm";
 
 // Use an in-memory SQLite database unless the caller overrides it.

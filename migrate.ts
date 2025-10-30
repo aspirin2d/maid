@@ -1,5 +1,3 @@
-import "dotenv/config";
-
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
