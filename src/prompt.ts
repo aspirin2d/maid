@@ -15,7 +15,7 @@ export const MemoryUpdateSchema = z.object({
         id: z.string().describe("The unique identifier of the memory item."),
         text: z.string().describe("The content of the memory item."),
         event: z
-          .enum(["ADD", "UPDATE", "DELETE"])
+          .enum(["ADD", "UPDATE"])
           .describe(
             "The action taken for this memory item (ADD, UPDATE, or DELETE).",
           ),
@@ -82,7 +82,8 @@ ${formattedFacts}
 Decision rules:
 1. For each fact, determine whether it should create, adjust, or remove a memory.
    - Prefer ADD when the fact is new, high-signal, and not already captured.
-   - Prefer UPDATE when the fact conflicts, refines or corrects an existing memory; combine old and new details into a single clear sentence.
+   - Prefer UPDATE when the fact refines or corrects an existing memory; combine old and new details into a single clear sentence.
+   - Prefer UPDATE new facts conflict with existing memories, overwrite the old memories with the new facts (while referencing the old memories).
 2. Never emit redundant operations. If an existing memory already matches the latest fact, omit it.
 3. Always use the provided labels:
    - ADD → set "id" to the fact label (e.g., "F1") and leave "text" as an empty string; the system will copy the fact statement.
