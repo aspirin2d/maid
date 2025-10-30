@@ -3,7 +3,34 @@ import { z } from "zod";
 // Define Zod schema for fact retrieval output
 export const FactRetrievalSchema = z.object({
   facts: z
-    .array(z.string())
+    .array(
+      z.object({
+        text: z.string().describe("The fact about the user"),
+        category: z
+          .enum([
+            "PERSONAL_INFO",
+            "PREFERENCE",
+            "GOAL",
+            "ROUTINE",
+            "RELATIONSHIP",
+            "HEALTH",
+            "EVENT",
+            "WORK",
+            "OTHER",
+          ])
+          .describe("The category of the fact"),
+        importance: z
+          .number()
+          .min(0)
+          .max(1)
+          .describe("How important this fact is (0-1 scale)"),
+        confidence: z
+          .number()
+          .min(0)
+          .max(1)
+          .describe("How confident you are about this fact (0-1 scale)"),
+      }),
+    )
     .describe("An array of distinct facts extracted from the conversation."),
 });
 
@@ -19,6 +46,34 @@ export const MemoryUpdateSchema = z.object({
           .describe(
             "The action taken for this memory item (ADD, UPDATE, or DELETE).",
           ),
+        category: z
+          .enum([
+            "PERSONAL_INFO",
+            "PREFERENCE",
+            "GOAL",
+            "ROUTINE",
+            "RELATIONSHIP",
+            "HEALTH",
+            "EVENT",
+            "WORK",
+            "OTHER",
+          ])
+          .optional()
+          .describe("The category of the memory (required for ADD)"),
+        importance: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe("How important this memory is (0-1 scale, required for ADD)"),
+        confidence: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "How confident you are about this memory (0-1 scale, required for ADD)",
+          ),
       }),
     )
     .describe(
@@ -32,13 +87,15 @@ export function getFactRetrievalMessages(
   const systemPrompt = `Your task: Extract important facts about the user from conversations.
 
 WHAT TO EXTRACT:
-1. User's name, identity, and personal details
-2. Preferences (likes, dislikes, choices)
-3. Goals and plans
-4. Routines and habits
-5. Relationships
-6. Health needs
-7. Important events
+1. User's name, identity, and personal details (PERSONAL_INFO)
+2. Preferences (likes, dislikes, choices) (PREFERENCE)
+3. Goals and plans (GOAL)
+4. Routines and habits (ROUTINE)
+5. Relationships (RELATIONSHIP)
+6. Health needs (HEALTH)
+7. Important events (EVENT)
+8. Work and career (WORK)
+9. Other relevant information (OTHER)
 
 WHAT TO IGNORE:
 1. Greetings and small talk
@@ -49,16 +106,42 @@ WHAT TO IGNORE:
 6. Third-party information
 
 FORMATTING RULES:
-1. Return JSON only: {"facts": ["..."]}
+1. Return JSON only with this structure:
+   {"facts": [{"text": "...", "category": "...", "importance": 0.0, "confidence": 0.0}]}
 2. No markdown, no extra text
-3. One fact per sentence
+3. One fact per object
 4. ALWAYS start with "User" as the subject
 5. Never use "I", "They", "He", "She"
 
+CATEGORIES:
+- PERSONAL_INFO: name, age, identity, location
+- PREFERENCE: likes, dislikes, favorites
+- GOAL: plans, aspirations, objectives
+- ROUTINE: habits, schedules, regular activities
+- RELATIONSHIP: friends, family, connections
+- HEALTH: medical info, fitness, wellness
+- EVENT: important occurrences, milestones
+- WORK: career, job, professional info
+- OTHER: anything else relevant
+
+IMPORTANCE SCALE (0-1):
+- 0.9-1.0: Critical identity info (name, core values)
+- 0.7-0.9: Important preferences and goals
+- 0.5-0.7: Regular routines and relationships
+- 0.3-0.5: Minor preferences and events
+- 0.1-0.3: Casual mentions
+
+CONFIDENCE SCALE (0-1):
+- 0.9-1.0: Explicitly stated facts
+- 0.7-0.9: Strongly implied information
+- 0.5-0.7: Moderately implied
+- 0.3-0.5: Weakly implied
+- 0.1-0.3: Uncertain inference
+
 EXAMPLES:
-- "I prefer coffee" → "User prefers coffee over coke"
-- "My name is Jack" → "User's name is Jack"
-- "I run on weekends" → "User runs on weekends"
+- "I prefer coffee" → {"text": "User prefers coffee", "category": "PREFERENCE", "importance": 0.5, "confidence": 0.95}
+- "My name is Jack" → {"text": "User's name is Jack", "category": "PERSONAL_INFO", "importance": 1.0, "confidence": 1.0}
+- "I run on weekends" → {"text": "User runs on weekends", "category": "ROUTINE", "importance": 0.6, "confidence": 0.9}
 
 DATES:
 - Today is ${new Date().toISOString().split("T")[0]}
@@ -70,9 +153,9 @@ IMPORTANT:
 - If user corrects information, use the new version only
 - Never make up facts
 - If no facts found, return {"facts": []}
-- One clear fact per string`;
+- One clear fact per object`;
 
-  const userPrompt = `Read this conversation and extract facts about the user. Return JSON format: {"facts": ["..."]}\n\nConversation:\n${parsedMessages}`;
+  const userPrompt = `Read this conversation and extract facts about the user. Return JSON format: {"facts": [{"text": "...", "category": "...", "importance": 0.0, "confidence": 0.0}]}\n\nConversation:\n${parsedMessages}`;
 
   return [systemPrompt, userPrompt];
 }
@@ -103,8 +186,9 @@ For each new fact, decide: ADD or UPDATE?
 WHEN TO ADD:
 - The fact is completely new
 - No existing memory covers this information
-- Use: {"id":"F1","text":"","event":"ADD"}
+- Use: {"id":"F1","text":"","event":"ADD","category":"CATEGORY","importance":0.8,"confidence":0.9}
 - Leave "text" empty, system will copy the fact
+- Provide category, importance (0-1), and confidence (0-1)
 
 WHEN TO UPDATE:
 - The fact refines an existing memory
@@ -112,10 +196,36 @@ WHEN TO UPDATE:
 - The fact conflicts with an existing memory
 - Use: {"id":"M2","text":"Updated text here","event":"UPDATE"}
 - Combine old and new information into one clear sentence
+- Category, importance, and confidence are optional for UPDATE
 
 WHEN TO SKIP:
 - Existing memory already says the same thing
 - Don't include it in the output
+
+CATEGORIES:
+- PERSONAL_INFO: name, age, identity, location
+- PREFERENCE: likes, dislikes, favorites
+- GOAL: plans, aspirations, objectives
+- ROUTINE: habits, schedules, regular activities
+- RELATIONSHIP: friends, family, connections
+- HEALTH: medical info, fitness, wellness
+- EVENT: important occurrences, milestones
+- WORK: career, job, professional info
+- OTHER: anything else relevant
+
+IMPORTANCE SCALE (0-1):
+- 0.9-1.0: Critical identity info
+- 0.7-0.9: Important preferences and goals
+- 0.5-0.7: Regular routines and relationships
+- 0.3-0.5: Minor preferences and events
+- 0.1-0.3: Casual mentions
+
+CONFIDENCE SCALE (0-1):
+- 0.9-1.0: Explicitly stated
+- 0.7-0.9: Strongly implied
+- 0.5-0.7: Moderately implied
+- 0.3-0.5: Weakly implied
+- 0.1-0.3: Uncertain
 
 FORMATTING:
 1. Return JSON: {"memory":[...]}
@@ -132,7 +242,7 @@ Bad: "They live in Seattle"
 Bad: "Name is Jordan"
 
 OUTPUT FORMAT:
-{"memory":[{"id":"F1","text":"","event":"ADD"},{"id":"M2","text":"User drinks coffee black on weekdays","event":"UPDATE"}]}`;
+{"memory":[{"id":"F1","text":"","event":"ADD","category":"PREFERENCE","importance":0.6,"confidence":0.9},{"id":"M2","text":"User drinks coffee black on weekdays","event":"UPDATE"}]}`;
 }
 
 export function parseMessages(messages: string[]): string {
