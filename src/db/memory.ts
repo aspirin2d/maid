@@ -6,11 +6,13 @@ import {
   gte,
   lte,
   inArray,
+  sql,
   type InferSelectModel,
   type InferInsertModel,
 } from "drizzle-orm";
 import db from "./index";
 import { memory } from "./schema";
+import { embedText, type Provider } from "../llm";
 
 // ============
 // Types
@@ -48,14 +50,106 @@ export interface ListMemoriesOptions {
 }
 
 // ============
+// Embedding Operations
+// ============
+
+/**
+ * Insert or update embedding in vec_memories table
+ */
+async function upsertMemoryEmbedding(
+  memoryId: number,
+  content: string,
+  provider: Provider = "ollama",
+): Promise<void> {
+  if (!content) {
+    return;
+  }
+
+  // Generate embedding
+  const embedding = await embedText(provider, content);
+
+  // Delete existing embedding if any
+  await db.run(
+    sql`DELETE FROM vec_memories WHERE memory_id = ${String(memoryId)}`,
+  );
+
+  // Insert new embedding
+  await db.run(
+    sql`INSERT INTO vec_memories(memory_id, embedding, payload)
+        VALUES (${String(memoryId)}, ${JSON.stringify(embedding)}, ${content})`,
+  );
+}
+
+/**
+ * Search for similar memories using vector similarity
+ */
+export async function searchSimilarMemories(
+  query: string,
+  options: {
+    userId: string;
+    limit?: number;
+    provider?: Provider;
+    includeDeleted?: boolean;
+  },
+): Promise<Array<Memory & { distance: number }>> {
+  const { userId, limit = 10, provider = "ollama", includeDeleted = false } = options;
+
+  // Generate embedding for the query
+  const queryEmbedding = await embedText(provider, query);
+
+  // Search for similar vectors
+  const results = await db.all<{ memory_id: string; distance: number }>(
+    sql`
+      SELECT memory_id, distance
+      FROM vec_memories
+      WHERE embedding MATCH ${JSON.stringify(queryEmbedding)}
+        AND k = ${limit * 2}
+      ORDER BY distance
+    `,
+  );
+
+  if (results.length === 0) {
+    return [];
+  }
+
+  // Get the actual memory records
+  const memoryIds = results.map((r) => parseInt(r.memory_id, 10));
+  const memories = await getMemoriesByIds(memoryIds, includeDeleted);
+
+  // Filter by userId and deleted status
+  const filteredMemories = memories.filter((m) => {
+    if (m.userId !== userId) return false;
+    if (!includeDeleted && m.deleted === 1) return false;
+    return true;
+  });
+
+  // Create a map of memory_id to distance
+  const distanceMap = new Map(
+    results.map((r) => [parseInt(r.memory_id, 10), r.distance]),
+  );
+
+  // Combine memories with their distances
+  const memoriesWithDistance = filteredMemories
+    .map((memory) => ({
+      ...memory,
+      distance: distanceMap.get(memory.id) ?? Infinity,
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
+
+  return memoriesWithDistance;
+}
+
+// ============
 // CRUD Operations
 // ============
 
 /**
- * Create a new memory entry
+ * Create a new memory entry with embedding
  */
 export async function createMemory(
   input: CreateMemoryInput,
+  provider: Provider = "ollama",
 ): Promise<number> {
   const [inserted] = await db
     .insert(memory)
@@ -72,14 +166,20 @@ export async function createMemory(
     throw new Error("Failed to create memory");
   }
 
+  // Generate and store embedding if content exists
+  if (input.content) {
+    await upsertMemoryEmbedding(inserted.id, input.content, provider);
+  }
+
   return inserted.id;
 }
 
 /**
- * Create multiple memory entries at once
+ * Create multiple memory entries at once with embeddings
  */
 export async function createMemories(
   inputs: CreateMemoryInput[],
+  provider: Provider = "ollama",
 ): Promise<number[]> {
   if (inputs.length === 0) {
     return [];
@@ -97,6 +197,16 @@ export async function createMemories(
       })),
     )
     .returning({ id: memory.id });
+
+  // Generate and store embeddings for all memories with content
+  await Promise.all(
+    insertedRecords.map(async (record, index) => {
+      const content = inputs[index]?.content;
+      if (content) {
+        await upsertMemoryEmbedding(record.id, content, provider);
+      }
+    }),
+  );
 
   return insertedRecords.map((r) => r.id);
 }
@@ -117,12 +227,13 @@ export async function getMemory(
 }
 
 /**
- * Update a memory entry
+ * Update a memory entry with automatic embedding regeneration
  * Automatically updates the updatedAt timestamp
  */
 export async function updateMemory(
   memoryId: number,
   updates: UpdateMemoryInput,
+  provider: Provider = "ollama",
 ): Promise<boolean> {
   const result = await db
     .update(memory)
@@ -132,6 +243,11 @@ export async function updateMemory(
     })
     .where(eq(memory.id, memoryId))
     .returning({ id: memory.id });
+
+  // Regenerate embedding if content was updated
+  if (result.length > 0 && updates.content) {
+    await upsertMemoryEmbedding(memoryId, updates.content, provider);
+  }
 
   return result.length > 0;
 }
@@ -444,12 +560,13 @@ export async function getMemoryStats(userId: string): Promise<{
 }
 
 /**
- * Update memory content and track the change
+ * Update memory content and track the change with embedding regeneration
  * Creates a new version with action="UPDATE" and stores previous content
  */
 export async function updateMemoryContent(
   memoryId: number,
   newContent: string,
+  provider: Provider = "ollama",
 ): Promise<boolean> {
   const existing = await getMemory(memoryId);
 
@@ -467,6 +584,11 @@ export async function updateMemoryContent(
     })
     .where(eq(memory.id, memoryId))
     .returning({ id: memory.id });
+
+  // Regenerate embedding with new content
+  if (result.length > 0) {
+    await upsertMemoryEmbedding(memoryId, newContent, provider);
+  }
 
   return result.length > 0;
 }

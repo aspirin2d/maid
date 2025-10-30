@@ -20,20 +20,25 @@ import {
   bulkHardDeleteMemories,
   purgeDeletedMemories,
   deleteMemoriesOlderThan,
+  searchSimilarMemories,
 } from "./src/db/memory";
 
 async function main() {
-  console.log("=== Testing Memory CRUD Functions ===\n");
+  console.log("=== Testing Memory CRUD Functions with Embeddings ===\n");
 
   const testUserId = "test-user-123";
+  const provider = "ollama"; // or "openai" depending on your setup
 
-  // Test 1: Create a memory
-  console.log("1. Creating a memory...");
-  const memoryId = await createMemory({
-    userId: testUserId,
-    content: "User likes coffee in the morning",
-    action: "ADD",
-  });
+  // Test 1: Create a memory with embedding
+  console.log("1. Creating a memory with embedding...");
+  const memoryId = await createMemory(
+    {
+      userId: testUserId,
+      content: "User likes coffee in the morning",
+      action: "ADD",
+    },
+    provider,
+  );
   console.log(`   Created memory with ID: ${memoryId}\n`);
 
   // Test 2: Get the memory
@@ -41,20 +46,23 @@ async function main() {
   const memory = await getMemory(memoryId);
   console.log(`   Memory: ${JSON.stringify(memory, null, 2)}\n`);
 
-  // Test 3: Create multiple memories
-  console.log("3. Creating multiple memories...");
-  const memoryIds = await createMemories([
-    {
-      userId: testUserId,
-      content: "User prefers dark mode",
-      action: "ADD",
-    },
-    {
-      userId: testUserId,
-      content: "User is learning TypeScript",
-      action: "ADD",
-    },
-  ]);
+  // Test 3: Create multiple memories with embeddings
+  console.log("3. Creating multiple memories with embeddings...");
+  const memoryIds = await createMemories(
+    [
+      {
+        userId: testUserId,
+        content: "User prefers dark mode",
+        action: "ADD",
+      },
+      {
+        userId: testUserId,
+        content: "User is learning TypeScript",
+        action: "ADD",
+      },
+    ],
+    provider,
+  );
   console.log(`   Created memories with IDs: ${memoryIds.join(", ")}\n`);
 
   // Test 4: List all active memories
@@ -62,20 +70,17 @@ async function main() {
   const activeMemories = await getActiveMemories(testUserId);
   console.log(`   Found ${activeMemories.length} active memories\n`);
 
-  // Test 5: Update memory content
-  console.log("5. Updating memory content...");
+  // Test 5: Update memory content with embedding regeneration
+  console.log("5. Updating memory content with embedding regeneration...");
   const updated = await updateMemoryContent(
     memoryId,
     "User loves coffee in the morning (updated)",
+    provider,
   );
   console.log(`   Update successful: ${updated}`);
   const updatedMemory = await getMemory(memoryId);
-  console.log(
-    `   New content: ${updatedMemory?.content}`,
-  );
-  console.log(
-    `   Previous content: ${updatedMemory?.prevContent}\n`,
-  );
+  console.log(`   New content: ${updatedMemory?.content}`);
+  console.log(`   Previous content: ${updatedMemory?.prevContent}\n`);
 
   // Test 6: Get memory stats
   console.log("6. Getting memory statistics...");
@@ -116,13 +121,31 @@ async function main() {
   const recentMemories = await getRecentlyUpdatedMemories(testUserId, 5);
   console.log(`   Found ${recentMemories.length} recent memories\n`);
 
-  // Test 13: Bulk soft delete
-  console.log("13. Bulk soft deleting memories...");
+  // Test 13: Vector similarity search
+  console.log("13. Searching for similar memories using vector search...");
+  const similarMemories = await searchSimilarMemories(
+    "What does the user drink in the morning?",
+    {
+      userId: testUserId,
+      limit: 3,
+      provider,
+    },
+  );
+  console.log(`   Found ${similarMemories.length} similar memories:`);
+  similarMemories.forEach((m, i) => {
+    console.log(
+      `     ${i + 1}. [distance: ${m.distance.toFixed(4)}] ${m.content}`,
+    );
+  });
+  console.log();
+
+  // Test 14: Bulk soft delete
+  console.log("14. Bulk soft deleting memories...");
   const deletedCount = await bulkSoftDeleteMemories(memoryIds);
   console.log(`   Soft deleted ${deletedCount} memories\n`);
 
-  // Test 14: List with filters
-  console.log("14. Listing memories with filters...");
+  // Test 15: List with filters
+  console.log("15. Listing memories with filters...");
   const filteredMemories = await listMemories({
     userId: testUserId,
     action: "DELETE",
@@ -131,23 +154,23 @@ async function main() {
   });
   console.log(`   Found ${filteredMemories.length} DELETE action memories\n`);
 
-  // Test 15: Memory history
-  console.log("15. Getting memory history...");
+  // Test 16: Memory history
+  console.log("16. Getting memory history...");
   const history = await getMemoryHistory(testUserId);
   console.log(`   Found ${history.length} total memory entries\n`);
 
-  // Test 16: Final stats
-  console.log("16. Final memory statistics...");
+  // Test 17: Final stats
+  console.log("17. Final memory statistics...");
   const finalStats = await getMemoryStats(testUserId);
   console.log(`   Final stats: ${JSON.stringify(finalStats, null, 2)}\n`);
 
-  // Test 17: Purge deleted memories
-  console.log("17. Purging deleted memories...");
+  // Test 18: Purge deleted memories
+  console.log("18. Purging deleted memories...");
   const purgedCount = await purgeDeletedMemories(testUserId);
   console.log(`   Purged ${purgedCount} deleted memories\n`);
 
-  // Test 18: Hard delete remaining memories
-  console.log("18. Hard deleting all remaining test memories...");
+  // Test 19: Hard delete remaining memories
+  console.log("19. Hard deleting all remaining test memories...");
   const remainingMemories = await getActiveMemories(testUserId);
   if (remainingMemories.length > 0) {
     const hardDeletedCount = await bulkHardDeleteMemories(
