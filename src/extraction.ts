@@ -7,6 +7,7 @@ import {
   DEFAULT_OPENAI_MODEL,
   DEFAULT_OLLAMA_MODEL,
   OLLAMA_KEEP_ALIVE,
+  embedTexts,
   type Provider,
 } from "./llm";
 import {
@@ -15,6 +16,7 @@ import {
   updateMemory,
   type Memory,
 } from "./memory";
+import db from "./db/index";
 import {
   FactRetrievalSchema,
   MemoryUpdateSchema,
@@ -236,15 +238,31 @@ async function buildSimilarityContext(args: {
 }> {
   const memoryIdToLabel = new Map<number, string>();
   const memoryReferences: MemoryReference[] = [];
-
   const factContexts: FactMatchContext[] = [];
 
-  for (const fact of args.facts) {
+  // Optimization: Batch generate embeddings for all facts at once
+  if (args.facts.length === 0) {
+    return {
+      factContexts: [],
+      memoryReferences: [],
+      labelToMemoryId: {},
+    };
+  }
+
+  const factStatements = args.facts.map((fact) => fact.statement);
+  const embeddings = await embedTexts(args.embeddingProvider, factStatements);
+
+  // Process each fact with its pre-computed embedding
+  for (let i = 0; i < args.facts.length; i++) {
+    const fact = args.facts[i]!;
+    const embedding = embeddings[i]!;
+
     const similarMemories = await searchSimilarMemories(fact.statement, {
       userId: args.userId,
       provider: args.embeddingProvider,
       limit: args.similarityLimit,
       includeDeleted: false,
+      embedding, // Pass pre-computed embedding to avoid regeneration
     });
 
     const labelsForFact: string[] = [];
@@ -331,101 +349,104 @@ async function applyMemoryDecisions(args: {
   );
   const factByLabel = new Map(args.facts.map((fact) => [fact.factId, fact]));
 
-  const changes: AppliedMemoryChange[] = [];
-  const createdMemoryIds: number[] = [];
-  const updatedMemoryIds: number[] = [];
+  // Wrap all memory operations in a transaction for atomicity
+  return await db.transaction(async (tx) => {
+    const changes: AppliedMemoryChange[] = [];
+    const createdMemoryIds: number[] = [];
+    const updatedMemoryIds: number[] = [];
 
-  for (const decision of args.decisions) {
-    const change: AppliedMemoryChange = {
-      decision,
-      createdMemoryIds: [],
-      updatedMemoryIds: [],
-    };
+    for (const decision of args.decisions) {
+      const change: AppliedMemoryChange = {
+        decision,
+        createdMemoryIds: [],
+        updatedMemoryIds: [],
+      };
 
-    switch (decision.event) {
-      case "ADD": {
-        const referencedFact = decision.id
-          ? factByLabel.get(decision.id)
-          : undefined;
+      switch (decision.event) {
+        case "ADD": {
+          const referencedFact = decision.id
+            ? factByLabel.get(decision.id)
+            : undefined;
 
-        let content = referencedFact?.statement.trim();
-        if (!content) {
+          let content = referencedFact?.statement.trim();
+          if (!content) {
+            throw new Error(
+              `ADD decision for label ${decision.id} is missing text content and does not reference a known fact`,
+            );
+          }
+
+          const memoryId = await createMemory(
+            {
+              userId: args.userId,
+              content,
+              action: "ADD",
+            },
+            args.provider,
+          );
+
+          change.createdMemoryIds.push(memoryId);
+          createdMemoryIds.push(memoryId);
+
+          break;
+        }
+
+        case "UPDATE": {
+          const ref = memoryByLabel.get(decision.id);
+          if (!ref) {
+            throw new Error(
+              `UPDATE decision referenced unknown memory label ${decision.id}`,
+            );
+          }
+
+          const newContent = (decision.text ?? "").trim();
+          if (!newContent) {
+            throw new Error(
+              `UPDATE decision for memory ${decision.id} is missing text content`,
+            );
+          }
+
+          const previousContent = ref.content ?? ref.raw.content ?? null;
+          const success = await updateMemory(
+            ref.memoryId,
+            {
+              content: newContent,
+              prevContent: previousContent ?? undefined,
+              action: "UPDATE",
+              deleted: 0,
+            },
+            args.provider,
+          );
+          if (!success) {
+            throw new Error(`Failed to update memory ${ref.memoryId}`);
+          }
+
+          ref.raw.prevContent = previousContent;
+          ref.raw.content = newContent;
+          ref.raw.deleted = 0;
+          ref.raw.action = "UPDATE";
+          ref.raw.updatedAt = new Date();
+          ref.content = newContent;
+          ref.deleted = false;
+          ref.action = "UPDATE";
+
+          change.updatedMemoryIds.push(ref.memoryId);
+          updatedMemoryIds.push(ref.memoryId);
+
+          break;
+        }
+
+        default: {
           throw new Error(
-            `ADD decision for label ${decision.id} is missing text content and does not reference a known fact`,
+            `Unsupported memory decision event: ${decision.event}`,
           );
         }
-
-        const memoryId = await createMemory(
-          {
-            userId: args.userId,
-            content,
-            action: "ADD",
-          },
-          args.provider,
-        );
-
-        change.createdMemoryIds.push(memoryId);
-        createdMemoryIds.push(memoryId);
-
-        break;
       }
 
-      case "UPDATE": {
-        const ref = memoryByLabel.get(decision.id);
-        if (!ref) {
-          throw new Error(
-            `UPDATE decision referenced unknown memory label ${decision.id}`,
-          );
-        }
-
-        const newContent = (decision.text ?? "").trim();
-        if (!newContent) {
-          throw new Error(
-            `UPDATE decision for memory ${decision.id} is missing text content`,
-          );
-        }
-
-        const previousContent = ref.content ?? ref.raw.content ?? null;
-        const success = await updateMemory(
-          ref.memoryId,
-          {
-            content: newContent,
-            prevContent: previousContent ?? undefined,
-            action: "UPDATE",
-            deleted: 0,
-          },
-          args.provider,
-        );
-        if (!success) {
-          throw new Error(`Failed to update memory ${ref.memoryId}`);
-        }
-
-        ref.raw.prevContent = previousContent;
-        ref.raw.content = newContent;
-        ref.raw.deleted = 0;
-        ref.raw.action = "UPDATE";
-        ref.raw.updatedAt = new Date();
-        ref.content = newContent;
-        ref.deleted = false;
-        ref.action = "UPDATE";
-
-        change.updatedMemoryIds.push(ref.memoryId);
-        updatedMemoryIds.push(ref.memoryId);
-
-        break;
-      }
-
-      default: {
-        throw new Error(
-          `Unsupported memory decision event: ${decision.event}`,
-        );
-      }
+      changes.push(change);
     }
 
-    changes.push(change);
-  }
-
-  return { changes, createdMemoryIds, updatedMemoryIds };
+    return { changes, createdMemoryIds, updatedMemoryIds };
+  });
 }
 
 export async function runMemoryExtraction(
@@ -436,59 +457,133 @@ export async function runMemoryExtraction(
   const llmProvider = options.llmProvider ?? "ollama";
   const similarityLimit = options.similarityLimit ?? DEFAULT_SIMILARITY_LIMIT;
 
-  const messages = await fetchPendingMessages(
-    options.userId,
-    options.messageLimit,
-  );
+  let messages: Message[] = [];
+  let facts: ExtractedFact[] = [];
+  let factContexts: FactMatchContext[] = [];
+  let memoryReferences: MemoryReference[] = [];
+  let labelToMemoryId: Record<string, number> = {};
+  let decisions: MemoryDecision[] = [];
+  let appliedChanges: AppliedMemoryChange[] = [];
+  let createdMemoryIds: number[] = [];
+  let updatedMemoryIds: number[] = [];
 
-  const facts = await extractFactsFromConversation({
-    messages,
-    model: options.llmModel,
-    minConfidence: options.minConfidence,
-    provider: llmProvider,
-  });
+  try {
+    // Step 1: Fetch pending messages
+    console.log(`[Memory Extraction] Fetching pending messages for user ${options.userId}`);
+    messages = await fetchPendingMessages(
+      options.userId,
+      options.messageLimit,
+    );
 
-  const { factContexts, memoryReferences, labelToMemoryId } =
-    await buildSimilarityContext({
-      userId: options.userId,
-      facts,
-      similarityLimit,
-      embeddingProvider,
+    if (messages.length === 0) {
+      console.log(`[Memory Extraction] No pending messages found`);
+      return {
+        userId: options.userId,
+        messages: [],
+        facts: [],
+        factContexts: [],
+        memoryReferences: [],
+        labelToMemoryId: {},
+        decisions: [],
+        appliedChanges: [],
+        createdMemoryIds: [],
+        updatedMemoryIds: [],
+        markedMessageIds: [],
+        markedMessageCount: 0,
+      };
+    }
+
+    console.log(`[Memory Extraction] Found ${messages.length} pending messages`);
+
+    // Step 2: Extract facts from conversation
+    console.log(`[Memory Extraction] Extracting facts from conversation`);
+    facts = await extractFactsFromConversation({
+      messages,
+      model: options.llmModel,
+      minConfidence: options.minConfidence,
+      provider: llmProvider,
     });
+    console.log(`[Memory Extraction] Extracted ${facts.length} facts`);
 
-  const decisions = await decideMemoryActions({
-    facts,
-    memoryReferences,
-    model: options.llmModel,
-    provider: llmProvider,
-  });
+    // Step 3: Build similarity context
+    console.log(`[Memory Extraction] Building similarity context`);
+    ({ factContexts, memoryReferences, labelToMemoryId } =
+      await buildSimilarityContext({
+        userId: options.userId,
+        facts,
+        similarityLimit,
+        embeddingProvider,
+      }));
+    console.log(`[Memory Extraction] Found ${memoryReferences.length} similar memories`);
 
-  const { changes: appliedChanges, createdMemoryIds, updatedMemoryIds } =
-    await applyMemoryDecisions({
-      userId: options.userId,
-      decisions,
+    // Step 4: Decide memory actions
+    console.log(`[Memory Extraction] Deciding memory actions`);
+    decisions = await decideMemoryActions({
+      facts,
       memoryReferences,
+      model: options.llmModel,
+      provider: llmProvider,
+    });
+    console.log(`[Memory Extraction] Generated ${decisions.length} memory decisions`);
+
+    // Step 5: Apply memory decisions (within transaction)
+    console.log(`[Memory Extraction] Applying memory decisions`);
+    ({ changes: appliedChanges, createdMemoryIds, updatedMemoryIds } =
+      await applyMemoryDecisions({
+        userId: options.userId,
+        decisions,
+        memoryReferences,
+        facts,
+        provider: memoryProvider,
+      }));
+    console.log(
+      `[Memory Extraction] Applied ${appliedChanges.length} changes: ` +
+        `${createdMemoryIds.length} created, ${updatedMemoryIds.length} updated`,
+    );
+
+    // Step 6: Mark messages as extracted (only after successful processing)
+    const markedMessageIds = messages.map((message) => message.id);
+    const markedMessageCount = markedMessageIds.length
+      ? await markMessagesExtracted(markedMessageIds, true)
+      : 0;
+    console.log(`[Memory Extraction] Marked ${markedMessageCount} messages as extracted`);
+
+    return {
+      userId: options.userId,
+      messages,
       facts,
-      provider: memoryProvider,
+      factContexts,
+      memoryReferences,
+      labelToMemoryId,
+      decisions,
+      appliedChanges,
+      createdMemoryIds,
+      updatedMemoryIds,
+      markedMessageIds,
+      markedMessageCount,
+    };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorStack = error instanceof Error ? error.stack : undefined;
+
+    console.error(`[Memory Extraction] Failed for user ${options.userId}:`, errorMessage);
+    if (errorStack) {
+      console.error(`[Memory Extraction] Stack trace:`, errorStack);
+    }
+
+    // Log context for debugging
+    console.error(`[Memory Extraction] Context:`, {
+      messagesFound: messages.length,
+      factsExtracted: facts.length,
+      memoriesReferenced: memoryReferences.length,
+      decisionsGenerated: decisions.length,
+      changesApplied: appliedChanges.length,
     });
 
-  const markedMessageIds = messages.map((message) => message.id);
-  const markedMessageCount = markedMessageIds.length
-    ? await markMessagesExtracted(markedMessageIds, true)
-    : 0;
-
-  return {
-    userId: options.userId,
-    messages,
-    facts,
-    factContexts,
-    memoryReferences,
-    labelToMemoryId,
-    decisions,
-    appliedChanges,
-    createdMemoryIds,
-    updatedMemoryIds,
-    markedMessageIds,
-    markedMessageCount,
-  };
+    // Re-throw with enhanced error message
+    throw new Error(
+      `Memory extraction failed for user ${options.userId}: ${errorMessage}`,
+      { cause: error },
+    );
+  }
 }
