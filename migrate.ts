@@ -24,12 +24,12 @@ function initVectorTable() {
     console.log("Initializing vec_memories table...");
 
     // Create virtual table for vector embeddings if it doesn't exist
-    // Using 4096 dimensions for qwen3-embedding model
     // Note: rowid is auto-generated, memory_id is TEXT reference to memory.id
     db.run(sql`
       CREATE VIRTUAL TABLE IF NOT EXISTS vec_memories USING vec0(
         memory_id TEXT,
-        embedding FLOAT[4096]
+        embedding FLOAT[1536],
+        payload TEXT NOT NULL
       )
     `);
 

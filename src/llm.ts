@@ -4,7 +4,7 @@ import { Ollama } from "ollama";
 export type Provider = "openai" | "ollama";
 
 // Shared embedding configuration
-export const EMBEDDING_DIMS = 4096;
+export const EMBEDDING_DIMS = 1536;
 export const DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
 export const DEFAULT_OLLAMA_EMBEDDING_MODEL = "qwen3-embedding";
 // Central default for Ollama generation model
