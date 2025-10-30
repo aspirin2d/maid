@@ -317,11 +317,6 @@ async function decideMemoryActions(args: {
     .map((message) => message.content)
     .join("\n\n");
 
-  if (decisionPrompt.trim().length > 0) {
-    console.log("=== Memory Update Prompt ===");
-    console.log(decisionPrompt);
-    console.log("=== End Memory Update Prompt ===");
-  }
   const structured = await callStructuredJson({
     messages,
     schemaName: "memory_update_planning",
@@ -469,13 +464,9 @@ export async function runMemoryExtraction(
 
   try {
     // Step 1: Fetch pending messages
-    console.log(
-      `[Memory Extraction] Fetching pending messages for user ${options.userId}`,
-    );
     messages = await fetchPendingMessages(options.userId, options.messageLimit);
 
     if (messages.length === 0) {
-      console.log(`[Memory Extraction] No pending messages found`);
       return {
         userId: options.userId,
         messages: [],
@@ -492,22 +483,15 @@ export async function runMemoryExtraction(
       };
     }
 
-    console.log(
-      `[Memory Extraction] Found ${messages.length} pending messages`,
-    );
-
     // Step 2: Extract facts from conversation
-    console.log(`[Memory Extraction] Extracting facts from conversation`);
     facts = await extractFactsFromConversation({
       messages,
       model: options.llmModel,
       minConfidence: options.minConfidence,
       provider: llmProvider,
     });
-    console.log(`[Memory Extraction] Extracted ${facts.length} facts`);
 
     // Step 3: Build similarity context
-    console.log(`[Memory Extraction] Building similarity context`);
     ({ factContexts, memoryReferences, labelToMemoryId } =
       await buildSimilarityContext({
         userId: options.userId,
@@ -515,13 +499,8 @@ export async function runMemoryExtraction(
         similarityLimit,
         embeddingProvider,
       }));
-    console.log(
-      `[Memory Extraction] Found ${memoryReferences.length} similar memories`,
-    );
 
     // Step 4: Decide memory actions
-    console.log(`[Memory Extraction] Deciding memory actions`);
-
     // Separate facts with and without similar memories
     const factsWithSimilarMemories: ExtractedFact[] = [];
     const factsWithoutSimilarMemories: ExtractedFact[] = [];
@@ -533,13 +512,6 @@ export async function runMemoryExtraction(
         factsWithSimilarMemories.push(context.fact);
       }
     }
-
-    console.log(
-      `[Memory Extraction] ${factsWithoutSimilarMemories.length} facts without similar memories will be added directly`,
-    );
-    console.log(
-      `[Memory Extraction] ${factsWithSimilarMemories.length} facts with similar memories need LLM decision`,
-    );
 
     // Create ADD decisions for facts without similar memories
     const directAddDecisions: MemoryDecision[] = factsWithoutSimilarMemories.map(
@@ -565,12 +537,7 @@ export async function runMemoryExtraction(
     // Combine direct ADD decisions with LLM decisions
     decisions = [...directAddDecisions, ...llmDecisions];
 
-    console.log(
-      `[Memory Extraction] Generated ${decisions.length} memory decisions (${directAddDecisions.length} direct, ${llmDecisions.length} from LLM)`,
-    );
-
     // Step 5: Apply memory decisions (within transaction)
-    console.log(`[Memory Extraction] Applying memory decisions`);
     ({
       changes: appliedChanges,
       createdMemoryIds,
@@ -582,19 +549,12 @@ export async function runMemoryExtraction(
       facts,
       provider: memoryProvider,
     }));
-    console.log(
-      `[Memory Extraction] Applied ${appliedChanges.length} changes: ` +
-        `${createdMemoryIds.length} created, ${updatedMemoryIds.length} updated`,
-    );
 
     // Step 6: Mark messages as extracted (only after successful processing)
     const markedMessageIds = messages.map((message) => message.id);
     const markedMessageCount = markedMessageIds.length
       ? await markMessagesExtracted(markedMessageIds, true)
       : 0;
-    console.log(
-      `[Memory Extraction] Marked ${markedMessageCount} messages as extracted`,
-    );
 
     return {
       userId: options.userId,
