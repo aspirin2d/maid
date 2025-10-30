@@ -1,22 +1,22 @@
 import { z, type ZodType } from "zod";
 
-import { listMessages, markMessagesExtracted, type Message } from "./message";
+import db from "./db/index";
 import {
-  getOpenAI,
-  getOllama,
-  DEFAULT_OPENAI_MODEL,
   DEFAULT_OLLAMA_MODEL,
+  DEFAULT_OPENAI_MODEL,
   OLLAMA_KEEP_ALIVE,
   embedTexts,
+  getOllama,
+  getOpenAI,
   type Provider,
 } from "./llm";
 import {
-  searchSimilarMemories,
   createMemory,
+  searchSimilarMemories,
   updateMemory,
   type Memory,
 } from "./memory";
-import db from "./db/index";
+import { listMessages, markMessagesExtracted, type Message } from "./message";
 import {
   FactRetrievalSchema,
   MemoryUpdateSchema,
@@ -350,7 +350,7 @@ async function applyMemoryDecisions(args: {
   const factByLabel = new Map(args.facts.map((fact) => [fact.factId, fact]));
 
   // Wrap all memory operations in a transaction for atomicity
-  return await db.transaction(async (tx) => {
+  return await db.transaction(async () => {
     const changes: AppliedMemoryChange[] = [];
     const createdMemoryIds: number[] = [];
     const updatedMemoryIds: number[] = [];
@@ -469,11 +469,10 @@ export async function runMemoryExtraction(
 
   try {
     // Step 1: Fetch pending messages
-    console.log(`[Memory Extraction] Fetching pending messages for user ${options.userId}`);
-    messages = await fetchPendingMessages(
-      options.userId,
-      options.messageLimit,
+    console.log(
+      `[Memory Extraction] Fetching pending messages for user ${options.userId}`,
     );
+    messages = await fetchPendingMessages(options.userId, options.messageLimit);
 
     if (messages.length === 0) {
       console.log(`[Memory Extraction] No pending messages found`);
@@ -493,7 +492,9 @@ export async function runMemoryExtraction(
       };
     }
 
-    console.log(`[Memory Extraction] Found ${messages.length} pending messages`);
+    console.log(
+      `[Memory Extraction] Found ${messages.length} pending messages`,
+    );
 
     // Step 2: Extract facts from conversation
     console.log(`[Memory Extraction] Extracting facts from conversation`);
@@ -514,7 +515,9 @@ export async function runMemoryExtraction(
         similarityLimit,
         embeddingProvider,
       }));
-    console.log(`[Memory Extraction] Found ${memoryReferences.length} similar memories`);
+    console.log(
+      `[Memory Extraction] Found ${memoryReferences.length} similar memories`,
+    );
 
     // Step 4: Decide memory actions
     console.log(`[Memory Extraction] Deciding memory actions`);
@@ -524,18 +527,23 @@ export async function runMemoryExtraction(
       model: options.llmModel,
       provider: llmProvider,
     });
-    console.log(`[Memory Extraction] Generated ${decisions.length} memory decisions`);
+    console.log(
+      `[Memory Extraction] Generated ${decisions.length} memory decisions`,
+    );
 
     // Step 5: Apply memory decisions (within transaction)
     console.log(`[Memory Extraction] Applying memory decisions`);
-    ({ changes: appliedChanges, createdMemoryIds, updatedMemoryIds } =
-      await applyMemoryDecisions({
-        userId: options.userId,
-        decisions,
-        memoryReferences,
-        facts,
-        provider: memoryProvider,
-      }));
+    ({
+      changes: appliedChanges,
+      createdMemoryIds,
+      updatedMemoryIds,
+    } = await applyMemoryDecisions({
+      userId: options.userId,
+      decisions,
+      memoryReferences,
+      facts,
+      provider: memoryProvider,
+    }));
     console.log(
       `[Memory Extraction] Applied ${appliedChanges.length} changes: ` +
         `${createdMemoryIds.length} created, ${updatedMemoryIds.length} updated`,
@@ -546,7 +554,9 @@ export async function runMemoryExtraction(
     const markedMessageCount = markedMessageIds.length
       ? await markMessagesExtracted(markedMessageIds, true)
       : 0;
-    console.log(`[Memory Extraction] Marked ${markedMessageCount} messages as extracted`);
+    console.log(
+      `[Memory Extraction] Marked ${markedMessageCount} messages as extracted`,
+    );
 
     return {
       userId: options.userId,
@@ -566,7 +576,10 @@ export async function runMemoryExtraction(
     const errorMessage = error instanceof Error ? error.message : String(error);
     const errorStack = error instanceof Error ? error.stack : undefined;
 
-    console.error(`[Memory Extraction] Failed for user ${options.userId}:`, errorMessage);
+    console.error(
+      `[Memory Extraction] Failed for user ${options.userId}:`,
+      errorMessage,
+    );
     if (errorStack) {
       console.error(`[Memory Extraction] Stack trace:`, errorStack);
     }

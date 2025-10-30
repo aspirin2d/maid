@@ -1,8 +1,8 @@
-import * as sqliteVec from "sqlite-vec";
-import { drizzle } from "drizzle-orm/bun-sqlite";
 import { Database } from "bun:sqlite";
-import { readdirSync, existsSync } from "node:fs";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import * as sqliteVec from "sqlite-vec";
 
 const SQLITE_DB_PATH = process.env.SQLITE_DB_PATH ?? "sqlite.db";
 
@@ -34,8 +34,8 @@ function setupCustomSQLite(): void {
       for (const version of versions) {
         const libDir = join(homebrewBase, version, "lib");
         if (existsSync(libDir)) {
-          const libs = readdirSync(libDir).filter((f) =>
-            f.startsWith("libsqlite3") && f.endsWith(".dylib")
+          const libs = readdirSync(libDir).filter(
+            (f) => f.startsWith("libsqlite3") && f.endsWith(".dylib"),
           );
           if (libs.length > 0) {
             const libPath = join(libDir, libs[0]!);

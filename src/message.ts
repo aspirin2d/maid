@@ -15,10 +15,11 @@ import { messages } from "./db/schema";
 export type Message = InferSelectModel<typeof messages>;
 export type NewMessage = InferInsertModel<typeof messages>;
 
-export type CreateMessageInput = Pick<NewMessage, "userId" | "role" | "content"> &
-  Partial<
-    Omit<NewMessage, "id" | "userId" | "role" | "content" | "createdAt">
-  >;
+export type CreateMessageInput = Pick<
+  NewMessage,
+  "userId" | "role" | "content"
+> &
+  Partial<Omit<NewMessage, "id" | "userId" | "role" | "content" | "createdAt">>;
 
 export type UpdateMessageInput = Partial<
   Omit<NewMessage, "id" | "userId" | "createdAt">

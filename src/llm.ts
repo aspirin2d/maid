@@ -1,5 +1,5 @@
-import OpenAI from "openai";
 import { Ollama } from "ollama";
+import OpenAI from "openai";
 
 export type Provider = "openai" | "ollama";
 

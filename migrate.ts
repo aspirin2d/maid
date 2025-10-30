@@ -3,9 +3,9 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import * as sqliteVec from "sqlite-vec";
-import { readdirSync, existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import * as sqliteVec from "sqlite-vec";
 
 /**
  * Attempt to configure a custom SQLite library on macOS for sqlite-vec compatibility.
@@ -35,8 +35,8 @@ function setupCustomSQLite(): void {
       for (const version of versions) {
         const libDir = join(homebrewBase, version, "lib");
         if (existsSync(libDir)) {
-          const libs = readdirSync(libDir).filter((f) =>
-            f.startsWith("libsqlite3") && f.endsWith(".dylib")
+          const libs = readdirSync(libDir).filter(
+            (f) => f.startsWith("libsqlite3") && f.endsWith(".dylib"),
           );
           if (libs.length > 0) {
             const libPath = join(libDir, libs[0]!);

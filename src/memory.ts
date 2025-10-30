@@ -1,16 +1,16 @@
 import {
-  eq,
   and,
-  desc,
   asc,
+  desc,
+  eq,
   gte,
-  lte,
   inArray,
+  lte,
   sql,
-  type InferSelectModel,
   type InferInsertModel,
+  type InferSelectModel,
 } from "drizzle-orm";
-import db, { sqlite } from "./db/index";
+import db from "./db/index";
 import { memory } from "./db/schema";
 import { embedText, type Provider } from "./llm";
 
@@ -94,8 +94,7 @@ async function upsertMemoryEmbedding(
           VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
     );
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error(
       `Failed to upsert embedding for memory ${memoryId}:`,
       errorMessage,
