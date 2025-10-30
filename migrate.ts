@@ -1,21 +1,65 @@
-import "dotenv/config";
-
 import { sql } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import * as sqliteVec from "sqlite-vec";
+import { readdirSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
-if (process.platform === "darwin") {
+/**
+ * Attempt to configure a custom SQLite library on macOS for sqlite-vec compatibility.
+ * Tries multiple strategies in order:
+ * 1. Environment variable SQLITE_LIBRARY_PATH
+ * 2. Latest version in Homebrew Cellar
+ * 3. Silently continue with system default if not found
+ */
+function setupCustomSQLite(): void {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
   try {
-    Database.setCustomSQLite(
-      "/opt/homebrew/Cellar/sqlite/3.50.4/lib/libsqlite3.3.50.4.dylib",
-    );
-  } catch {}
+    // Strategy 1: Check for explicit override via environment variable
+    const customPath = process.env.SQLITE_LIBRARY_PATH;
+    if (customPath && existsSync(customPath)) {
+      Database.setCustomSQLite(customPath);
+      console.log(`Using custom SQLite library: ${customPath}`);
+      return;
+    }
+
+    // Strategy 2: Find latest version in Homebrew Cellar
+    const homebrewBase = "/opt/homebrew/Cellar/sqlite";
+    if (existsSync(homebrewBase)) {
+      const versions = readdirSync(homebrewBase).sort().reverse();
+      for (const version of versions) {
+        const libDir = join(homebrewBase, version, "lib");
+        if (existsSync(libDir)) {
+          const libs = readdirSync(libDir).filter((f) =>
+            f.startsWith("libsqlite3") && f.endsWith(".dylib")
+          );
+          if (libs.length > 0) {
+            const libPath = join(libDir, libs[0]!);
+            Database.setCustomSQLite(libPath);
+            console.log(`Using Homebrew SQLite ${version}: ${libPath}`);
+            return;
+          }
+        }
+      }
+    }
+
+    // Strategy 3: Silently continue with Bun's default SQLite
+    console.log("Using Bun's default SQLite library");
+  } catch (error) {
+    // Silently continue - Bun's default SQLite should work
+    console.warn("Could not set custom SQLite library, using default:", error);
+  }
 }
 
-const sqlite = new Database(process.env.SQLITE_DB_PATH!);
+setupCustomSQLite();
+
+const SQLITE_DB_PATH = process.env.SQLITE_DB_PATH || "sqlite.db";
+const sqlite = new Database(SQLITE_DB_PATH);
 sqliteVec.load(sqlite);
 
 const db = drizzle({ client: sqlite });

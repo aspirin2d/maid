@@ -62,6 +62,7 @@ export interface ListMemoriesOptions {
 
 /**
  * Insert or update embedding in vec_memories table
+ * @throws {Error} If embedding generation or database operations fail
  */
 async function upsertMemoryEmbedding(
   memoryId: number,
@@ -72,19 +73,37 @@ async function upsertMemoryEmbedding(
     return;
   }
 
-  // Generate embedding
-  const embedding = await currentEmbedText(provider, content);
+  try {
+    // Generate embedding
+    const embedding = await currentEmbedText(provider, content);
 
-  const memoryKey = String(memoryId);
+    if (!embedding || embedding.length === 0) {
+      throw new Error(
+        `Failed to generate embedding for memory ${memoryId}: empty embedding returned`,
+      );
+    }
 
-  // Delete existing embedding if any
-  db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
+    const memoryKey = String(memoryId);
 
-  // Insert new embedding
-  db.run(
-    sql`INSERT INTO vec_memories(memory_id, embedding, payload)
-        VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
-  );
+    // Delete existing embedding if any
+    db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
+
+    // Insert new embedding
+    db.run(
+      sql`INSERT INTO vec_memories(memory_id, embedding, payload)
+          VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
+    );
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : String(error);
+    console.error(
+      `Failed to upsert embedding for memory ${memoryId}:`,
+      errorMessage,
+    );
+    throw new Error(
+      `Embedding operation failed for memory ${memoryId}: ${errorMessage}`,
+    );
+  }
 }
 
 /**

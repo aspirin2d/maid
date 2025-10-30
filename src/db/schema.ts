@@ -1,13 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, int, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const test = sqliteTable("test", {
-  id: int().primaryKey({ autoIncrement: true }),
-  createdAt: text("created_at")
-    .notNull()
-    .default(sql`(current_timestamp)`),
-});
-
 export const user = sqliteTable("user", {
   id: int("id").primaryKey({ autoIncrement: true }),
   name: text("name"),

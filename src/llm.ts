@@ -15,13 +15,20 @@ export const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL;
 export const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE ?? "24h"; // e.g. "30m", "2h", "-1"
 
 export function getOpenAI(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "OPENAI_API_KEY environment variable is not set. Please add it to your .env file.",
+    );
+  }
   return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY!,
+    apiKey,
   });
 }
 
 export function getOllama(): Ollama {
-  return new Ollama({ host: OLLAMA_BASE_URL });
+  const host = OLLAMA_BASE_URL || "http://localhost:11434";
+  return new Ollama({ host });
 }
 
 export function fitToDims(vec: number[], dims = EMBEDDING_DIMS): number[] {
