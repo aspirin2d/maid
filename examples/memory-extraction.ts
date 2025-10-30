@@ -157,7 +157,7 @@ async function main() {
       userId: createdUserId,
       embeddingProvider: "ollama",
       memoryProvider: "ollama",
-      llmProvider: "openai",
+      llmProvider: "ollama",
       // Optionally, set llmModel or minConfidence here.
     });
 
@@ -186,7 +186,7 @@ async function main() {
       userId: createdUserId,
       embeddingProvider: "ollama",
       memoryProvider: "ollama",
-      llmProvider: "openai",
+      llmProvider: "ollama",
     });
 
     console.log("=== Memory Extraction Result After Additional Messages ===");
