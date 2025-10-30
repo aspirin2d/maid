@@ -23,7 +23,6 @@ function setupCustomSQLite(): void {
     const customPath = process.env.SQLITE_LIBRARY_PATH;
     if (customPath && existsSync(customPath)) {
       Database.setCustomSQLite(customPath);
-      console.log(`Using custom SQLite library: ${customPath}`);
       return;
     }
 
@@ -40,7 +39,6 @@ function setupCustomSQLite(): void {
           if (libs.length > 0) {
             const libPath = join(libDir, libs[0]!);
             Database.setCustomSQLite(libPath);
-            console.log(`Using Homebrew SQLite ${version}: ${libPath}`);
             return;
           }
         }
@@ -48,7 +46,6 @@ function setupCustomSQLite(): void {
     }
 
     // Strategy 3: Silently continue with Bun's default SQLite
-    console.log("Using Bun's default SQLite library");
   } catch (error) {
     // Silently continue - Bun's default SQLite should work
     console.warn("Could not set custom SQLite library, using default:", error);
@@ -71,16 +68,6 @@ export function createDb(filePath: string = SQLITE_DB_PATH): DbHandle {
 
   // Enable foreign key constraints (required for CASCADE deletes)
   sqlite.run("PRAGMA foreign_keys = ON;");
-
-  const { sqlite_version, vec_version } = sqlite
-    .prepare(
-      "select sqlite_version() as sqlite_version, vec_version() as vec_version;",
-    )
-    .get() as { sqlite_version: string; vec_version: string };
-
-  console.log(
-    `platform:${process.platform}, sqlite:${sqlite_version}, vec:${vec_version}`,
-  );
 
   const db = drizzle({ client: sqlite });
 
