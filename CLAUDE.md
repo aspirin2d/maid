@@ -51,9 +51,10 @@ Default to using Bun instead of Node.js:
 - Support for filtering by role, extraction status, and timestamps
 
 **`src/extraction.ts`** - Intelligent memory extraction
-- Extract facts from conversation messages using LLMs
+- Extract facts from conversation messages using LLMs with metadata (category, importance, confidence)
 - Search for similar existing memories using vector embeddings
 - Decide whether to ADD new memories or UPDATE existing ones
+- **Important**: Metadata (category, importance, confidence) is evaluated ONCE during fact extraction, NOT re-evaluated during decision-making
 - Atomic transactions for all memory operations
 - **Optimization**: Batch embed all facts at once to reduce API calls
 
@@ -190,6 +191,7 @@ const result = await runMemoryExtraction({
 6. **Validate inputs** with Zod schemas before database operations
 7. **Handle provider failures** gracefully with fallbacks or retries
 8. **Test with both providers** (Ollama and OpenAI) to ensure compatibility
+9. **Evaluate metadata once** - Extract category, importance, and confidence during fact extraction phase, NOT during decision-making phase. The decision phase only decides ADD/UPDATE actions.
 
 ## Performance Optimization
 
