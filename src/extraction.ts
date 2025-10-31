@@ -24,7 +24,7 @@ import {
   getUpdateMemoryMessages,
   parseMessages,
   removeCodeBlocks,
-} from "./prompt";
+} from "./prompt/extraction";
 
 export type ExtractedFact = {
   factId: string;
@@ -328,7 +328,7 @@ async function buildSimilarityContext(args: {
   const factContexts = tempFactContexts.map((ctx, index) => ({
     fact: unifiedFacts[index]!,
     similarMemoryLabels: ctx.similarMemoryLabels.map(
-      (label) => tempToUnified[label] ?? label
+      (label) => tempToUnified[label] ?? label,
     ),
   }));
 
