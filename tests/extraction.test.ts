@@ -171,9 +171,8 @@ describe("runMemoryExtraction", () => {
       event: "ADD",
       id: "1",
     });
-    expect(result.memoryReferences).toHaveLength(0);
-    expect(result.factContexts).toHaveLength(1);
-    expect(result.markedMessageCount).toBe(1);
+    expect(result.facts).toHaveLength(1);
+    expect(result.markedMessageIds).toEqual([7]);
   });
 
   test("updates existing memories when LLM requests update", async () => {
@@ -310,9 +309,8 @@ describe("runMemoryExtraction", () => {
       text: "User bikes to work every weekday morning",
       event: "UPDATE",
     });
-    expect(result.factContexts[0]?.fact.factId).toBe("2");
-    expect(result.labelToMemoryId["1"]).toBe(33);
-    expect(result.markedMessageCount).toBe(1);
+    expect(result.facts[0]?.factId).toBe("2");
+    expect(result.markedMessageIds).toEqual([12]);
   });
 
   test("handles mix of updates and additions for multiple facts", async () => {
@@ -486,11 +484,12 @@ describe("runMemoryExtraction", () => {
     });
     expect(result.createdMemoryIds).toEqual([144]);
     expect(result.updatedMemoryIds).toEqual([88]);
-    expect(result.factContexts).toHaveLength(2);
-    expect(result.factContexts[0]?.similarMemoryLabels).toEqual(["1"]);
-    expect(result.factContexts[1]?.similarMemoryLabels).toEqual([]);
-    expect(result.labelToMemoryId["1"]).toBe(88);
-    expect(result.markedMessageCount).toBe(1);
+    expect(result.facts).toHaveLength(2);
+    expect(result.facts.map((fact) => fact.statement)).toEqual([
+      "User cycles to the office every weekday",
+      "User paints landscapes at night",
+    ]);
+    expect(result.markedMessageIds).toEqual([20]);
   });
 
   test("propagates errors from memory updates and avoids marking messages", async () => {
