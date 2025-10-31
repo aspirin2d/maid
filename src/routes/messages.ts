@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, Context } from "hono";
 import { z } from "zod";
 import {
   createMessage,
@@ -33,7 +33,7 @@ const updateMessageSchema = z.object({
 });
 
 // POST /api/messages - Create a single message
-app.post("/", async (c) => {
+app.post("/", async (c: Context) => {
   try {
     const body = await c.req.json();
     const input = createMessageSchema.parse(body);
@@ -51,7 +51,7 @@ app.post("/", async (c) => {
 });
 
 // POST /api/messages/batch - Create multiple messages
-app.post("/batch", async (c) => {
+app.post("/batch", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { messages } = z.object({
@@ -75,7 +75,7 @@ app.post("/batch", async (c) => {
 });
 
 // GET /api/messages - List messages with filtering
-app.get("/", async (c) => {
+app.get("/", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -112,7 +112,7 @@ app.get("/", async (c) => {
 });
 
 // GET /api/messages/:id - Get a single message by ID
-app.get("/:id", async (c) => {
+app.get("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     const message = await getMessage(id);
@@ -131,7 +131,7 @@ app.get("/:id", async (c) => {
 });
 
 // PUT /api/messages/:id - Update a message
-app.put("/:id", async (c) => {
+app.put("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
@@ -150,7 +150,7 @@ app.put("/:id", async (c) => {
 });
 
 // DELETE /api/messages/:id - Delete a single message
-app.delete("/:id", async (c) => {
+app.delete("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     await deleteMessage(id);
@@ -165,7 +165,7 @@ app.delete("/:id", async (c) => {
 });
 
 // POST /api/messages/bulk-delete - Delete multiple messages
-app.post("/bulk-delete", async (c) => {
+app.post("/bulk-delete", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { messageIds } = z.object({
@@ -184,7 +184,7 @@ app.post("/bulk-delete", async (c) => {
 });
 
 // POST /api/messages/mark-extracted - Mark messages as extracted/unextracted
-app.post("/mark-extracted", async (c) => {
+app.post("/mark-extracted", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { messageIds, extracted } = z.object({
@@ -207,7 +207,7 @@ app.post("/mark-extracted", async (c) => {
 });
 
 // GET /api/messages/unextracted - Get unextracted messages for a user
-app.get("/unextracted", async (c) => {
+app.get("/unextracted", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -233,7 +233,7 @@ app.get("/unextracted", async (c) => {
 });
 
 // GET /api/messages/by-role/:role - Get messages by role
-app.get("/by-role/:role", async (c) => {
+app.get("/by-role/:role", async (c: Context) => {
   try {
     const role = c.req.param("role");
     const userId = c.req.query("userId");

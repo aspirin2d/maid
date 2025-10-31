@@ -1,4 +1,4 @@
-import { Hono } from "hono";
+import { Hono, Context } from "hono";
 import { z } from "zod";
 import {
   createMemory,
@@ -62,7 +62,7 @@ const searchMemoriesSchema = z.object({
 });
 
 // POST /api/memories - Create a single memory
-app.post("/", async (c) => {
+app.post("/", async (c: Context) => {
   try {
     const body = await c.req.json();
     const input = createMemorySchema.parse(body);
@@ -81,7 +81,7 @@ app.post("/", async (c) => {
 });
 
 // POST /api/memories/batch - Create multiple memories
-app.post("/batch", async (c) => {
+app.post("/batch", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { memories, provider } = z.object({
@@ -102,7 +102,7 @@ app.post("/batch", async (c) => {
 });
 
 // GET /api/memories - List memories with filtering
-app.get("/", async (c) => {
+app.get("/", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -139,7 +139,7 @@ app.get("/", async (c) => {
 });
 
 // GET /api/memories/search - Vector similarity search
-app.get("/search", async (c) => {
+app.get("/search", async (c: Context) => {
   try {
     const query = c.req.query("query");
     const userId = c.req.query("userId");
@@ -169,7 +169,7 @@ app.get("/search", async (c) => {
 });
 
 // GET /api/memories/stats - Get memory statistics
-app.get("/stats", async (c) => {
+app.get("/stats", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
 
@@ -188,7 +188,7 @@ app.get("/stats", async (c) => {
 });
 
 // GET /api/memories/active - Get active (non-deleted) memories
-app.get("/active", async (c) => {
+app.get("/active", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -211,7 +211,7 @@ app.get("/active", async (c) => {
 });
 
 // GET /api/memories/recent - Get recently updated memories
-app.get("/recent", async (c) => {
+app.get("/recent", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -234,7 +234,7 @@ app.get("/recent", async (c) => {
 });
 
 // GET /api/memories/deleted - Get soft-deleted memories
-app.get("/deleted", async (c) => {
+app.get("/deleted", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -257,7 +257,7 @@ app.get("/deleted", async (c) => {
 });
 
 // GET /api/memories/history - Get memory history
-app.get("/history", async (c) => {
+app.get("/history", async (c: Context) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -283,7 +283,7 @@ app.get("/history", async (c) => {
 });
 
 // GET /api/memories/:id - Get a single memory by ID
-app.get("/:id", async (c) => {
+app.get("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     const memory = await getMemory(id);
@@ -302,7 +302,7 @@ app.get("/:id", async (c) => {
 });
 
 // PUT /api/memories/:id - Update a memory
-app.put("/:id", async (c) => {
+app.put("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
@@ -322,7 +322,7 @@ app.put("/:id", async (c) => {
 });
 
 // PATCH /api/memories/:id/content - Update memory content only
-app.patch("/:id/content", async (c) => {
+app.patch("/:id/content", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
@@ -344,7 +344,7 @@ app.patch("/:id/content", async (c) => {
 });
 
 // DELETE /api/memories/:id - Soft delete a memory
-app.delete("/:id", async (c) => {
+app.delete("/:id", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     await softDeleteMemory(id);
@@ -359,7 +359,7 @@ app.delete("/:id", async (c) => {
 });
 
 // DELETE /api/memories/:id/hard - Hard delete a memory
-app.delete("/:id/hard", async (c) => {
+app.delete("/:id/hard", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     await hardDeleteMemory(id);
@@ -374,7 +374,7 @@ app.delete("/:id/hard", async (c) => {
 });
 
 // POST /api/memories/:id/restore - Restore a soft-deleted memory
-app.post("/:id/restore", async (c) => {
+app.post("/:id/restore", async (c: Context) => {
   try {
     const id = parseInt(c.req.param("id"));
     await restoreMemory(id);
@@ -390,7 +390,7 @@ app.post("/:id/restore", async (c) => {
 });
 
 // POST /api/memories/bulk-delete - Bulk soft delete memories
-app.post("/bulk-delete", async (c) => {
+app.post("/bulk-delete", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { memoryIds } = z.object({
@@ -409,7 +409,7 @@ app.post("/bulk-delete", async (c) => {
 });
 
 // POST /api/memories/bulk-hard-delete - Bulk hard delete memories
-app.post("/bulk-hard-delete", async (c) => {
+app.post("/bulk-hard-delete", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { memoryIds } = z.object({
@@ -428,7 +428,7 @@ app.post("/bulk-hard-delete", async (c) => {
 });
 
 // POST /api/memories/purge-deleted - Purge all soft-deleted memories for a user
-app.post("/purge-deleted", async (c) => {
+app.post("/purge-deleted", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { userId } = z.object({
@@ -447,7 +447,7 @@ app.post("/purge-deleted", async (c) => {
 });
 
 // POST /api/memories/delete-older-than - Delete memories older than a cutoff date
-app.post("/delete-older-than", async (c) => {
+app.post("/delete-older-than", async (c: Context) => {
   try {
     const body = await c.req.json();
     const { userId, cutoffDate } = z.object({

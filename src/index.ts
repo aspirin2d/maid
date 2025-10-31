@@ -1,11 +1,11 @@
-import { Hono } from "hono";
+import { Hono, Context } from "hono";
 import memoryRoutes from "./routes/memory";
 import messageRoutes from "./routes/messages";
 import extractionRoutes from "./routes/extraction";
 
 const app = new Hono();
 
-app.get("/", (c) => {
+app.get("/", (c: Context) => {
   return c.json({
     status: "ok",
     message: "MAID - Memory-Augmented Intelligence Database",
