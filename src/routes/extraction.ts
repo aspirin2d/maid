@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { z } from "zod";
 import {
   runMemoryExtraction,
@@ -20,7 +20,7 @@ const extractionSchema = z.object({
 });
 
 // POST /api/extraction/run - Run memory extraction from messages
-app.post("/run", async (c: Context) => {
+app.post("/run", async (c) => {
   try {
     const body = await c.req.json();
     const options = extractionSchema.parse(body);
@@ -54,7 +54,7 @@ app.post("/run", async (c: Context) => {
 
 // POST /api/extraction/preview - Preview what would be extracted without committing
 // This is a dry-run mode that doesn't create/update memories or mark messages
-app.post("/preview", async (c: Context) => {
+app.post("/preview", async (c) => {
   try {
     const body = await c.req.json();
     const options = extractionSchema.parse(body);
@@ -90,7 +90,7 @@ app.post("/preview", async (c: Context) => {
 });
 
 // GET /api/extraction/status - Check extraction status for a user
-app.get("/status", async (c: Context) => {
+app.get("/status", async (c) => {
   try {
     const userId = c.req.query("userId");
 

@@ -1,4 +1,4 @@
-import { Hono, type Context } from "hono";
+import { Hono } from "hono";
 import { z } from "zod";
 import {
   createMemory,
@@ -62,7 +62,7 @@ const searchMemoriesSchema = z.object({
 });
 
 // POST /api/memories - Create a single memory
-app.post("/", async (c: Context) => {
+app.post("/", async (c) => {
   try {
     const body = await c.req.json();
     const input = createMemorySchema.parse(body);
@@ -81,7 +81,7 @@ app.post("/", async (c: Context) => {
 });
 
 // POST /api/memories/batch - Create multiple memories
-app.post("/batch", async (c: Context) => {
+app.post("/batch", async (c) => {
   try {
     const body = await c.req.json();
     const { memories, provider } = z.object({
@@ -102,7 +102,7 @@ app.post("/batch", async (c: Context) => {
 });
 
 // GET /api/memories - List memories with filtering
-app.get("/", async (c: Context) => {
+app.get("/", async (c) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -139,7 +139,7 @@ app.get("/", async (c: Context) => {
 });
 
 // GET /api/memories/search - Vector similarity search
-app.get("/search", async (c: Context) => {
+app.get("/search", async (c) => {
   try {
     const query = c.req.query("query");
     const userId = c.req.query("userId");
@@ -169,7 +169,7 @@ app.get("/search", async (c: Context) => {
 });
 
 // GET /api/memories/stats - Get memory statistics
-app.get("/stats", async (c: Context) => {
+app.get("/stats", async (c) => {
   try {
     const userId = c.req.query("userId");
 
@@ -188,7 +188,7 @@ app.get("/stats", async (c: Context) => {
 });
 
 // GET /api/memories/active - Get active (non-deleted) memories
-app.get("/active", async (c: Context) => {
+app.get("/active", async (c) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -211,7 +211,7 @@ app.get("/active", async (c: Context) => {
 });
 
 // GET /api/memories/recent - Get recently updated memories
-app.get("/recent", async (c: Context) => {
+app.get("/recent", async (c) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -234,7 +234,7 @@ app.get("/recent", async (c: Context) => {
 });
 
 // GET /api/memories/deleted - Get soft-deleted memories
-app.get("/deleted", async (c: Context) => {
+app.get("/deleted", async (c) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -257,7 +257,7 @@ app.get("/deleted", async (c: Context) => {
 });
 
 // GET /api/memories/history - Get memory history
-app.get("/history", async (c: Context) => {
+app.get("/history", async (c) => {
   try {
     const userId = c.req.query("userId");
     const limit = c.req.query("limit");
@@ -283,7 +283,7 @@ app.get("/history", async (c: Context) => {
 });
 
 // GET /api/memories/:id - Get a single memory by ID
-app.get("/:id", async (c: Context) => {
+app.get("/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const memory = await getMemory(id);
@@ -302,7 +302,7 @@ app.get("/:id", async (c: Context) => {
 });
 
 // PUT /api/memories/:id - Update a memory
-app.put("/:id", async (c: Context) => {
+app.put("/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
@@ -322,7 +322,7 @@ app.put("/:id", async (c: Context) => {
 });
 
 // PATCH /api/memories/:id/content - Update memory content only
-app.patch("/:id/content", async (c: Context) => {
+app.patch("/:id/content", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     const body = await c.req.json();
@@ -344,7 +344,7 @@ app.patch("/:id/content", async (c: Context) => {
 });
 
 // DELETE /api/memories/:id - Soft delete a memory
-app.delete("/:id", async (c: Context) => {
+app.delete("/:id", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     await softDeleteMemory(id);
@@ -359,7 +359,7 @@ app.delete("/:id", async (c: Context) => {
 });
 
 // DELETE /api/memories/:id/hard - Hard delete a memory
-app.delete("/:id/hard", async (c: Context) => {
+app.delete("/:id/hard", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     await hardDeleteMemory(id);
@@ -374,7 +374,7 @@ app.delete("/:id/hard", async (c: Context) => {
 });
 
 // POST /api/memories/:id/restore - Restore a soft-deleted memory
-app.post("/:id/restore", async (c: Context) => {
+app.post("/:id/restore", async (c) => {
   try {
     const id = parseInt(c.req.param("id"));
     await restoreMemory(id);
@@ -390,7 +390,7 @@ app.post("/:id/restore", async (c: Context) => {
 });
 
 // POST /api/memories/bulk-delete - Bulk soft delete memories
-app.post("/bulk-delete", async (c: Context) => {
+app.post("/bulk-delete", async (c) => {
   try {
     const body = await c.req.json();
     const { memoryIds } = z.object({
@@ -409,7 +409,7 @@ app.post("/bulk-delete", async (c: Context) => {
 });
 
 // POST /api/memories/bulk-hard-delete - Bulk hard delete memories
-app.post("/bulk-hard-delete", async (c: Context) => {
+app.post("/bulk-hard-delete", async (c) => {
   try {
     const body = await c.req.json();
     const { memoryIds } = z.object({
@@ -428,7 +428,7 @@ app.post("/bulk-hard-delete", async (c: Context) => {
 });
 
 // POST /api/memories/purge-deleted - Purge all soft-deleted memories for a user
-app.post("/purge-deleted", async (c: Context) => {
+app.post("/purge-deleted", async (c) => {
   try {
     const body = await c.req.json();
     const { userId } = z.object({
@@ -447,12 +447,12 @@ app.post("/purge-deleted", async (c: Context) => {
 });
 
 // POST /api/memories/delete-older-than - Delete memories older than a cutoff date
-app.post("/delete-older-than", async (c: Context) => {
+app.post("/delete-older-than", async (c) => {
   try {
     const body = await c.req.json();
     const { userId, cutoffDate } = z.object({
       userId: z.number(),
-      cutoffDate: z.string().transform((val: string) => new Date(val)),
+      cutoffDate: z.string().transform((val) => new Date(val)),
     }).parse(body);
 
     const count = await deleteMemoriesOlderThan(userId, cutoffDate);
