@@ -236,6 +236,60 @@ export async function createMemories(
 }
 
 /**
+ * Create multiple memory entries with pre-computed embeddings (optimized for batch operations)
+ */
+export async function createMemoriesWithEmbeddings(
+  inputs: CreateMemoryInput[],
+  embeddings: number[][],
+  provider: Provider = "ollama",
+): Promise<number[]> {
+  if (inputs.length === 0) {
+    return [];
+  }
+
+  if (inputs.length !== embeddings.length) {
+    throw new Error(
+      `Mismatch between inputs (${inputs.length}) and embeddings (${embeddings.length})`,
+    );
+  }
+
+  const insertedRecords = await db
+    .insert(memory)
+    .values(
+      inputs.map((input) => ({
+        userId: input.userId,
+        content: input.content,
+        prevContent: input.prevContent,
+        category: input.category,
+        importance: input.importance,
+        confidence: input.confidence,
+        action: input.action ?? "ADD",
+        deleted: input.deleted ?? 0,
+      })),
+    )
+    .returning({ id: memory.id });
+
+  // Insert pre-computed embeddings for all memories with content
+  for (let i = 0; i < insertedRecords.length; i++) {
+    const record = insertedRecords[i];
+    const content = inputs[i]?.content;
+    const embedding = embeddings[i];
+
+    if (content && embedding && embedding.length > 0) {
+      const memoryKey = String(record.id);
+      // Insert embedding directly (skip generation since we have it)
+      db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
+      db.run(
+        sql`INSERT INTO vec_memories(memory_id, embedding, payload)
+            VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
+      );
+    }
+  }
+
+  return insertedRecords.map((r) => r.id);
+}
+
+/**
  * Get a memory by ID
  */
 export async function getMemory(memoryId: number): Promise<Memory | undefined> {
