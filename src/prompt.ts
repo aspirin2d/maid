@@ -137,21 +137,33 @@ IMPORTANT:
 export function getUpdateMemoryMessages(
   retrievedOldMemory: Array<{ id: string; text: string }>,
   newRetrievedFacts: Array<{ id: string; text: string }>,
-): string {
+): { prompt: string; unifiedToOriginal: Record<string, string> } {
+  // Create unified numbering: memories get 1, 2, 3... and facts continue from there
+  const unifiedToOriginal: Record<string, string> = {};
+
   const formattedExisting = retrievedOldMemory.length
-    ? retrievedOldMemory.map(({ id, text }) => `- ${id}: ${text}`).join("\n")
+    ? retrievedOldMemory.map(({ id, text }, index) => {
+        const unifiedId = (index + 1).toString();
+        unifiedToOriginal[unifiedId] = id;
+        return `${unifiedId}. ${text}`;
+      }).join("\n")
     : "- None";
 
+  const memoryCount = retrievedOldMemory.length;
   const formattedFacts = newRetrievedFacts.length
-    ? newRetrievedFacts.map(({ id, text }) => `- ${id}: ${text}`).join("\n")
+    ? newRetrievedFacts.map(({ id, text }, index) => {
+        const unifiedId = (memoryCount + index + 1).toString();
+        unifiedToOriginal[unifiedId] = id;
+        return `${unifiedId}. ${text}`;
+      }).join("\n")
     : "- None";
 
-  return `Your task: Compare new facts with existing memories and decide what to do.
+  const prompt = `Your task: Compare new facts with existing memories and decide what to do.
 
-EXISTING MEMORIES (M#):
+RECENT MEMORIES:
 ${formattedExisting}
 
-NEW FACTS (F#):
+NEW EXTRACTED FACTS:
 ${formattedFacts}
 
 YOUR JOB:
@@ -160,7 +172,7 @@ For each new fact, decide: ADD or UPDATE?
 WHEN TO ADD:
 - The fact is completely new
 - No existing memory covers this information
-- Use: {"id":"F1","text":"","event":"ADD"}
+- Use the fact's number: {"id":"${memoryCount + 1}","text":"","event":"ADD"}
 - Leave "text" empty, system will copy the fact automatically
 - The fact's category, importance, and confidence will be preserved
 
@@ -168,7 +180,7 @@ WHEN TO UPDATE:
 - The fact refines an existing memory
 - The fact corrects an existing memory
 - The fact conflicts with an existing memory
-- Use: {"id":"M2","text":"Updated text here","event":"UPDATE"}
+- Use the memory's number: {"id":"2","text":"Updated text here","event":"UPDATE"}
 - Combine old and new information into one clear sentence
 - The fact's category, importance, and confidence will be used
 
@@ -181,7 +193,10 @@ FORMATTING:
 2. Always use "User" as subject
 3. Never use "I", "They", "He", "She"
 4. Keep sentences clear and simple
+5. Use the unified numbers (1, 2, 3...) to reference items
 `;
+
+  return { prompt, unifiedToOriginal };
 }
 
 export function parseMessages(messages: string[]): string {

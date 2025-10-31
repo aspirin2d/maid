@@ -128,15 +128,18 @@ function buildFactRetrievalMessages(messages: Message[]): ChatMessage[] {
 function buildMemoryUpdateMessages(
   memoryReferences: MemoryReference[],
   facts: ExtractedFact[],
-): ChatMessage[] {
+): { messages: ChatMessage[]; unifiedToOriginal: Record<string, string> } {
   const snapshot = memoryReferences
     .filter((ref) => (ref.content ?? "").trim().length > 0)
     .map((ref) => ({ id: ref.label, text: ref.content ?? "" }));
   const factSummaries = facts
     .map((fact) => ({ id: fact.factId, text: fact.statement }))
     .filter((fact) => fact.text.trim().length > 0);
-  const prompt = getUpdateMemoryMessages(snapshot, factSummaries);
-  return [{ role: "user", content: prompt }];
+  const { prompt, unifiedToOriginal } = getUpdateMemoryMessages(snapshot, factSummaries);
+  return {
+    messages: [{ role: "user", content: prompt }],
+    unifiedToOriginal,
+  };
 }
 
 async function callStructuredJson<Schema extends ZodType>(args: {
@@ -323,7 +326,7 @@ async function decideMemoryActions(args: {
     return [];
   }
 
-  const messages = buildMemoryUpdateMessages(args.memoryReferences, args.facts);
+  const { messages, unifiedToOriginal } = buildMemoryUpdateMessages(args.memoryReferences, args.facts);
   const decisionPrompt = messages
     .filter((message) => message.role === "user")
     .map((message) => message.content)
@@ -337,7 +340,11 @@ async function decideMemoryActions(args: {
     provider: args.provider,
   });
 
-  return structured.memory;
+  // Map unified IDs back to original M# and F# labels
+  return structured.memory.map((decision) => ({
+    ...decision,
+    id: unifiedToOriginal[decision.id] ?? decision.id,
+  }));
 }
 
 async function applyMemoryDecisions(args: {
