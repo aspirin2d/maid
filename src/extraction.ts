@@ -346,6 +346,7 @@ async function applyMemoryDecisions(args: {
   memoryReferences: MemoryReference[];
   provider: Provider;
   facts: ExtractedFact[];
+  factContexts?: FactMatchContext[];
 }): Promise<{
   changes: AppliedMemoryChange[];
   createdMemoryIds: number[];
@@ -382,13 +383,10 @@ async function applyMemoryDecisions(args: {
             );
           }
 
-          // Use metadata from decision if provided, otherwise fall back to fact metadata
-          const category =
-            decision.category ?? referencedFact?.category ?? "OTHER";
-          const importance =
-            decision.importance ?? referencedFact?.importance ?? 0.5;
-          const confidence =
-            decision.confidence ?? referencedFact?.confidence ?? 0.5;
+          // Always use the fact's metadata (never re-evaluate in decision phase)
+          const category = referencedFact?.category ?? "OTHER";
+          const importance = referencedFact?.importance ?? 0.5;
+          const confidence = referencedFact?.confidence ?? 0.5;
 
           const memoryId = await createMemory(
             {
@@ -433,16 +431,27 @@ async function applyMemoryDecisions(args: {
             deleted: 0,
           };
 
-          // Include metadata if provided in the decision
-          if (decision.category) {
-            updateFields.category = decision.category;
+          // Find the fact(s) that triggered this update and use their metadata
+          // A memory UPDATE is triggered when a fact is similar to it
+          const triggeringFacts = args.factContexts
+            ?.filter((ctx) => ctx.similarMemoryLabels.includes(decision.id))
+            .map((ctx) => ctx.fact);
+
+          // If exactly one fact triggered this update, use its metadata
+          if (triggeringFacts && triggeringFacts.length === 1) {
+            const triggeringFact = triggeringFacts[0];
+            if (triggeringFact?.category) {
+              updateFields.category = triggeringFact.category;
+            }
+            if (triggeringFact?.importance !== undefined) {
+              updateFields.importance = triggeringFact.importance;
+            }
+            if (triggeringFact?.confidence !== undefined) {
+              updateFields.confidence = triggeringFact.confidence;
+            }
           }
-          if (decision.importance !== undefined) {
-            updateFields.importance = decision.importance;
-          }
-          if (decision.confidence !== undefined) {
-            updateFields.confidence = decision.confidence;
-          }
+          // If multiple facts triggered this, keep existing memory metadata
+          // (no changes to category, importance, confidence)
 
           const success = await updateMemory(
             ref.memoryId,
@@ -588,6 +597,7 @@ export async function runMemoryExtraction(
       decisions,
       memoryReferences,
       facts,
+      factContexts,
       provider: memoryProvider,
     }));
 

@@ -46,33 +46,10 @@ export const MemoryUpdateSchema = z.object({
           .describe(
             "The action taken for this memory item (ADD, UPDATE, or DELETE).",
           ),
-        category: z
-          .enum([
-            "PERSONAL_INFO",
-            "PREFERENCE",
-            "GOAL",
-            "ROUTINE",
-            "RELATIONSHIP",
-            "HEALTH",
-            "EVENT",
-            "WORK",
-            "OTHER",
-          ])
-          .describe("The category of the memory (required for ADD)"),
-        importance: z
-          .number()
-          .min(0)
-          .max(1)
-          .describe(
-            "How important this memory is (0-1 scale, required for ADD)",
-          ),
-        confidence: z
-          .number()
-          .min(0)
-          .max(1)
-          .describe(
-            "How confident you are about this memory (0-1 scale, required for ADD)",
-          ),
+        rationale: z
+          .string()
+          .optional()
+          .describe("Brief explanation of why this action was chosen"),
       }),
     )
     .describe(
@@ -185,52 +162,28 @@ For each new fact, decide: ADD or UPDATE?
 WHEN TO ADD:
 - The fact is completely new
 - No existing memory covers this information
-- Use: {"id":"F1","text":"","event":"ADD","category":"CATEGORY","importance":0.8,"confidence":0.9}
-- Leave "text" empty, system will copy the fact
-- Provide category, importance (0-1), and confidence (0-1)
+- Use: {"id":"F1","text":"","event":"ADD","rationale":"explanation"}
+- Leave "text" empty, system will copy the fact automatically
+- The fact's category, importance, and confidence will be preserved
 
 WHEN TO UPDATE:
 - The fact refines an existing memory
 - The fact corrects an existing memory
 - The fact conflicts with an existing memory
-- Use: {"id":"M2","text":"Updated text here","event":"UPDATE"}
+- Use: {"id":"M2","text":"Updated text here","event":"UPDATE","rationale":"explanation"}
 - Combine old and new information into one clear sentence
-- Category, importance, and confidence are optional for UPDATE
+- The fact's category, importance, and confidence will be used
 
 WHEN TO SKIP:
 - Existing memory already says the same thing
 - Don't include it in the output
-
-CATEGORIES:
-- PERSONAL_INFO: name, age, identity, location
-- PREFERENCE: likes, dislikes, favorites
-- GOAL: plans, aspirations, objectives
-- ROUTINE: habits, schedules, regular activities
-- RELATIONSHIP: friends, family, connections
-- HEALTH: medical info, fitness, wellness
-- EVENT: important occurrences, milestones
-- WORK: career, job, professional info
-- OTHER: anything else relevant
-
-IMPORTANCE SCALE (0-1):
-- 0.9-1.0: Critical identity info
-- 0.7-0.9: Important preferences and goals
-- 0.5-0.7: Regular routines and relationships
-- 0.3-0.5: Minor preferences and events
-- 0.1-0.3: Casual mentions
-
-CONFIDENCE SCALE (0-1):
-- 0.9-1.0: Explicitly stated
-- 0.7-0.9: Strongly implied
-- 0.5-0.7: Moderately implied
-- 0.3-0.5: Weakly implied
-- 0.1-0.3: Uncertain
 
 FORMATTING:
 1. Return JSON: {"memory":[...]}
 2. Always use "User" as subject
 3. Never use "I", "They", "He", "She"
 4. Keep sentences clear and simple
+5. Rationale is optional but helpful for debugging
 
 EXAMPLES:
 Good: "User prefers cappuccinos"
@@ -241,7 +194,7 @@ Bad: "They live in Seattle"
 Bad: "Name is Jordan"
 
 OUTPUT FORMAT:
-{"memory":[{"id":"F1","text":"","event":"ADD","category":"PREFERENCE","importance":0.6,"confidence":0.9},{"id":"M2","text":"User drinks coffee black on weekdays","event":"UPDATE"}]}`;
+{"memory":[{"id":"F1","text":"","event":"ADD","rationale":"Completely new preference"},{"id":"M2","text":"User drinks coffee black on weekdays","event":"UPDATE","rationale":"Refines existing coffee preference"}]}`;
 }
 
 export function parseMessages(messages: string[]): string {
