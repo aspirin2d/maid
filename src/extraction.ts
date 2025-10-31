@@ -370,10 +370,12 @@ async function applyMemoryDecisions(args: {
   provider: Provider;
   facts: ExtractedFact[];
   factContexts?: FactMatchContext[];
+  messageIds: number[];
 }): Promise<{
   changes: AppliedMemoryChange[];
   createdMemoryIds: number[];
   updatedMemoryIds: number[];
+  markedMessageCount: number;
 }> {
   const memoryByLabel = new Map(
     args.memoryReferences.map((ref) => [ref.label, ref]),
@@ -381,7 +383,7 @@ async function applyMemoryDecisions(args: {
   const factByLabel = new Map(args.facts.map((fact) => [fact.factId, fact]));
 
   // Wrap all memory operations in a transaction for atomicity
-  return await db.transaction(async () => {
+  return await db.transaction(async (tx) => {
     const changes: AppliedMemoryChange[] = [];
     const createdMemoryIds: number[] = [];
     const updatedMemoryIds: number[] = [];
@@ -510,7 +512,12 @@ async function applyMemoryDecisions(args: {
       changes.push(change);
     }
 
-    return { changes, createdMemoryIds, updatedMemoryIds };
+    // Mark messages as extracted within the same transaction
+    const markedMessageCount = args.messageIds.length
+      ? await markMessagesExtracted(args.messageIds, true, tx)
+      : 0;
+
+    return { changes, createdMemoryIds, updatedMemoryIds, markedMessageCount };
   });
 }
 
@@ -611,11 +618,15 @@ export async function runMemoryExtraction(
     // Combine direct ADD decisions with LLM decisions
     decisions = [...directAddDecisions, ...llmDecisions];
 
-    // Step 5: Apply memory decisions (within transaction)
+    // Step 5: Apply memory decisions and mark messages (within transaction)
+    const markedMessageIds = messages.map((message) => message.id);
+    let markedMessageCount = 0;
+
     ({
       changes: appliedChanges,
       createdMemoryIds,
       updatedMemoryIds,
+      markedMessageCount,
     } = await applyMemoryDecisions({
       userId: options.userId,
       decisions,
@@ -623,13 +634,8 @@ export async function runMemoryExtraction(
       facts,
       factContexts,
       provider: memoryProvider,
+      messageIds: markedMessageIds,
     }));
-
-    // Step 6: Mark messages as extracted (only after successful processing)
-    const markedMessageIds = messages.map((message) => message.id);
-    const markedMessageCount = markedMessageIds.length
-      ? await markMessagesExtracted(markedMessageIds, true)
-      : 0;
 
     return {
       userId: options.userId,
