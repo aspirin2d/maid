@@ -125,63 +125,6 @@ function buildFactRetrievalMessages(messages: Message[]): ChatMessage[] {
   ];
 }
 
-/**
- * Convert M# and F# labels to unified numbering (1, 2, 3...) at the start of decision phase.
- * This simplifies the prompt and eliminates the need for mapping.
- */
-function unifyLabels(args: {
-  memoryReferences: MemoryReference[];
-  facts: ExtractedFact[];
-  factContexts: FactMatchContext[];
-  labelToMemoryId: Record<string, number>;
-}): {
-  memoryReferences: MemoryReference[];
-  facts: ExtractedFact[];
-  factContexts: FactMatchContext[];
-  labelToMemoryId: Record<string, number>;
-} {
-  const oldToUnified: Record<string, string> = {};
-
-  // Assign unified IDs to memories (1, 2, 3...)
-  const unifiedMemoryRefs = args.memoryReferences.map((ref, index) => {
-    const unifiedLabel = (index + 1).toString();
-    oldToUnified[ref.label] = unifiedLabel;
-    return { ...ref, label: unifiedLabel };
-  });
-
-  // Assign unified IDs to facts (continuing from memories)
-  const memoryCount = args.memoryReferences.length;
-  const unifiedFacts = args.facts.map((fact, index) => {
-    const unifiedLabel = (memoryCount + index + 1).toString();
-    oldToUnified[fact.factId] = unifiedLabel;
-    return { ...fact, factId: unifiedLabel };
-  });
-
-  // Update fact contexts to use unified labels
-  const unifiedFactContexts = args.factContexts.map((ctx) => ({
-    fact: unifiedFacts.find((f) => oldToUnified[ctx.fact.factId] === f.factId)!,
-    similarMemoryLabels: ctx.similarMemoryLabels.map(
-      (label) => oldToUnified[label] ?? label
-    ),
-  }));
-
-  // Update labelToMemoryId mapping
-  const unifiedLabelToMemoryId: Record<string, number> = {};
-  for (const [oldLabel, memoryId] of Object.entries(args.labelToMemoryId)) {
-    const unifiedLabel = oldToUnified[oldLabel];
-    if (unifiedLabel) {
-      unifiedLabelToMemoryId[unifiedLabel] = memoryId;
-    }
-  }
-
-  return {
-    memoryReferences: unifiedMemoryRefs,
-    facts: unifiedFacts,
-    factContexts: unifiedFactContexts,
-    labelToMemoryId: unifiedLabelToMemoryId,
-  };
-}
-
 function buildMemoryUpdateMessages(
   memoryReferences: MemoryReference[],
   facts: ExtractedFact[],
@@ -305,9 +248,9 @@ async function buildSimilarityContext(args: {
   memoryReferences: MemoryReference[];
   labelToMemoryId: Record<string, number>;
 }> {
-  const memoryIdToLabel = new Map<number, string>();
-  const memoryReferences: MemoryReference[] = [];
-  const factContexts: FactMatchContext[] = [];
+  const memoryIdToTempLabel = new Map<number, string>();
+  const tempMemoryReferences: MemoryReference[] = [];
+  const tempFactContexts: FactMatchContext[] = [];
 
   // Optimization: Batch generate embeddings for all facts at once
   if (args.facts.length === 0) {
@@ -321,7 +264,7 @@ async function buildSimilarityContext(args: {
   const factStatements = args.facts.map((fact) => fact.statement);
   const embeddings = await embedTexts(args.embeddingProvider, factStatements);
 
-  // Process each fact with its pre-computed embedding
+  // Process each fact with its pre-computed embedding (using temporary M# labels)
   for (let i = 0; i < args.facts.length; i++) {
     const fact = args.facts[i]!;
     const embedding = embeddings[i]!;
@@ -337,15 +280,15 @@ async function buildSimilarityContext(args: {
     const labelsForFact: string[] = [];
 
     for (const match of similarMemories) {
-      const existingLabel = memoryIdToLabel.get(match.id);
+      const existingLabel = memoryIdToTempLabel.get(match.id);
       if (existingLabel) {
         labelsForFact.push(existingLabel);
         continue;
       }
 
-      const label = `M${memoryReferences.length + 1}`;
-      memoryIdToLabel.set(match.id, label);
-      memoryReferences.push({
+      const label = `M${tempMemoryReferences.length + 1}`;
+      memoryIdToTempLabel.set(match.id, label);
+      tempMemoryReferences.push({
         label,
         memoryId: match.id,
         distance: match.distance,
@@ -357,11 +300,37 @@ async function buildSimilarityContext(args: {
       labelsForFact.push(label);
     }
 
-    factContexts.push({
+    tempFactContexts.push({
       fact,
       similarMemoryLabels: labelsForFact,
     });
   }
+
+  // Now unify labels: memories get 1, 2, 3... and facts get N+1, N+2, N+3...
+  const tempToUnified: Record<string, string> = {};
+
+  // Assign unified IDs to memories
+  const memoryReferences = tempMemoryReferences.map((ref, index) => {
+    const unifiedLabel = (index + 1).toString();
+    tempToUnified[ref.label] = unifiedLabel;
+    return { ...ref, label: unifiedLabel };
+  });
+
+  // Assign unified IDs to facts
+  const memoryCount = tempMemoryReferences.length;
+  const unifiedFacts = args.facts.map((fact, index) => {
+    const unifiedLabel = (memoryCount + index + 1).toString();
+    tempToUnified[fact.factId] = unifiedLabel;
+    return { ...fact, factId: unifiedLabel };
+  });
+
+  // Update fact contexts with unified labels
+  const factContexts = tempFactContexts.map((ctx, index) => ({
+    fact: unifiedFacts[index]!,
+    similarMemoryLabels: ctx.similarMemoryLabels.map(
+      (label) => tempToUnified[label] ?? label
+    ),
+  }));
 
   const labelToMemoryId = Object.fromEntries(
     memoryReferences.map((ref) => [ref.label, ref.memoryId]),
@@ -592,7 +561,7 @@ export async function runMemoryExtraction(
       provider: llmProvider,
     });
 
-    // Step 3: Build similarity context
+    // Step 3: Build similarity context (with unified IDs: 1, 2, 3...)
     ({ factContexts, memoryReferences, labelToMemoryId } =
       await buildSimilarityContext({
         userId: options.userId,
@@ -601,13 +570,8 @@ export async function runMemoryExtraction(
         embeddingProvider,
       }));
 
-    // Step 3.5: Unify labels (M#/F# -> 1, 2, 3...) before decision phase
-    ({ memoryReferences, facts, factContexts, labelToMemoryId } = unifyLabels({
-      memoryReferences,
-      facts,
-      factContexts,
-      labelToMemoryId,
-    }));
+    // Update facts reference to use the unified facts from factContexts
+    facts = factContexts.map((ctx) => ctx.fact);
 
     // Step 4: Decide memory actions
     // Separate facts with and without similar memories
