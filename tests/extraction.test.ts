@@ -7,14 +7,7 @@ import {
   vi,
 } from "bun:test";
 
-type Message = {
-  id: number;
-  userId: number;
-  role: "user" | "assistant" | "system";
-  content: string;
-  createdAt?: Date;
-  extracted?: boolean;
-};
+import type { Message } from "../src/message";
 
 describe("runMemoryExtraction", () => {
   beforeEach(() => {
@@ -39,7 +32,7 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValue(0);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: (tx: any) => unknown) => callback(dbModule.default),
+      ((callback: (tx: any) => unknown) => callback(dbModule.default)) as any,
     );
 
     vi.spyOn(memoryModule, "createMemory").mockResolvedValue(0);
@@ -81,6 +74,7 @@ describe("runMemoryExtraction", () => {
         content: "I have started practicing yoga every morning.",
         createdAt,
         extracted: false,
+        metadata: null,
       },
     ];
 
@@ -119,14 +113,16 @@ describe("runMemoryExtraction", () => {
     const searchSimilarMemoriesMock = vi
       .spyOn(memoryModule, "searchSimilarMemories")
       .mockResolvedValue([]);
-    const createMemoryMock = vi
-      .spyOn(memoryModule, "createMemory")
-      .mockResolvedValue(101);
+    const createMemoriesWithEmbeddingsMock = vi
+      .spyOn(memoryModule, "createMemoriesWithEmbeddings")
+      .mockResolvedValue([101]);
     vi.spyOn(memoryModule, "updateMemory").mockResolvedValue(true);
 
     const transactionMock = vi
       .spyOn(dbModule.default, "transaction")
-      .mockImplementation(async (callback: (tx: any) => unknown) => callback(dbModule.default));
+      .mockImplementation(
+        ((callback: (tx: any) => unknown) => callback(dbModule.default)) as any,
+      );
 
     const { runMemoryExtraction } = await import("../src/extraction");
 
@@ -147,28 +143,34 @@ describe("runMemoryExtraction", () => {
         embedding: [0.1, 0.2, 0.3],
       }),
     );
-    expect(createMemoryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 9,
-        content: "User practices yoga every morning",
-        category: "ROUTINE",
-        importance: 0.6,
-        confidence: 0.9,
-        action: "ADD",
-      }),
-      "ollama",
+    expect(createMemoriesWithEmbeddingsMock).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          userId: 9,
+          content: "User practices yoga every morning",
+          category: "ROUTINE",
+          importance: 0.6,
+          confidence: 0.9,
+          action: "ADD",
+        }),
+      ],
+      [[0.1, 0.2, 0.3]],
+      dbModule.default,
     );
     expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(markMessagesExtractedMock).toHaveBeenCalledWith([7], true);
+    expect(markMessagesExtractedMock).toHaveBeenCalledWith(
+      [7],
+      true,
+      dbModule.default,
+    );
 
     expect(result.createdMemoryIds).toEqual([101]);
     expect(result.updatedMemoryIds).toEqual([]);
-    expect(result.decisions).toEqual([
-      expect.objectContaining({
-        event: "ADD",
-        id: "1",
-      }),
-    ]);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0]).toMatchObject({
+      event: "ADD",
+      id: "1",
+    });
     expect(result.memoryReferences).toHaveLength(0);
     expect(result.factContexts).toHaveLength(1);
     expect(result.markedMessageCount).toBe(1);
@@ -184,6 +186,7 @@ describe("runMemoryExtraction", () => {
         content: "These days I bike to work every weekday morning.",
         createdAt,
         extracted: false,
+        metadata: null,
       },
     ];
 
@@ -260,7 +263,7 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValue(true);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: (tx: any) => unknown) => callback(dbModule.default),
+      ((callback: (tx: any) => unknown) => callback(dbModule.default)) as any,
     );
 
     const { runMemoryExtraction } = await import("../src/extraction");
@@ -291,18 +294,22 @@ describe("runMemoryExtraction", () => {
         confidence: 0.95,
       }),
       "ollama",
+      dbModule.default,
     );
-    expect(markMessagesExtractedMock).toHaveBeenCalledWith([12], true);
+    expect(markMessagesExtractedMock).toHaveBeenCalledWith(
+      [12],
+      true,
+      dbModule.default,
+    );
 
     expect(result.createdMemoryIds).toEqual([]);
     expect(result.updatedMemoryIds).toEqual([33]);
-    expect(result.decisions).toEqual([
-      {
-        id: "1",
-        text: "User bikes to work every weekday morning",
-        event: "UPDATE",
-      },
-    ]);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0]).toMatchObject({
+      id: "1",
+      text: "User bikes to work every weekday morning",
+      event: "UPDATE",
+    });
     expect(result.factContexts[0]?.fact.factId).toBe("2");
     expect(result.labelToMemoryId["1"]).toBe(33);
     expect(result.markedMessageCount).toBe(1);
@@ -318,6 +325,7 @@ describe("runMemoryExtraction", () => {
         content: "I'm cycling to the office every weekday and painting landscapes at night.",
         createdAt,
         extracted: false,
+        metadata: null,
       },
     ];
 
@@ -393,16 +401,18 @@ describe("runMemoryExtraction", () => {
       .spyOn(memoryModule, "searchSimilarMemories")
       .mockResolvedValueOnce([existingMemory as any])
       .mockResolvedValueOnce([]);
-    const createMemoryMock = vi
-      .spyOn(memoryModule, "createMemory")
-      .mockResolvedValue(144);
+    const createMemoriesWithEmbeddingsMock = vi
+      .spyOn(memoryModule, "createMemoriesWithEmbeddings")
+      .mockResolvedValue([144]);
     const updateMemoryMock = vi
       .spyOn(memoryModule, "updateMemory")
       .mockResolvedValue(true);
 
     const transactionMock = vi
       .spyOn(dbModule.default, "transaction")
-      .mockImplementation(async (callback: (tx: any) => unknown) => callback(dbModule.default));
+      .mockImplementation(
+        ((callback: (tx: any) => unknown) => callback(dbModule.default)) as any,
+      );
 
     const { runMemoryExtraction } = await import("../src/extraction");
 
@@ -437,36 +447,43 @@ describe("runMemoryExtraction", () => {
         deleted: 0,
       }),
       "ollama",
+      dbModule.default,
     );
-    expect(createMemoryMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        userId: 21,
-        content: "User paints landscapes at night",
-        category: "OTHER",
-        importance: 0.4,
-        confidence: 0.85,
-        action: "ADD",
-      }),
-      "ollama",
+    expect(createMemoriesWithEmbeddingsMock).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          userId: 21,
+          content: "User paints landscapes at night",
+          category: "OTHER",
+          importance: 0.4,
+          confidence: 0.85,
+          action: "ADD",
+        }),
+      ],
+      [[0.2, 0.3, 0.4]],
+      dbModule.default,
     );
     expect(transactionMock).toHaveBeenCalledTimes(1);
-    expect(markMessagesExtractedMock).toHaveBeenCalledWith([20], true);
+    expect(markMessagesExtractedMock).toHaveBeenCalledWith(
+      [20],
+      true,
+      dbModule.default,
+    );
 
-    expect(result.decisions).toEqual([
-      {
-        event: "ADD",
-        id: "3",
-        text: "User paints landscapes at night",
-        category: "OTHER",
-        importance: 0.4,
-        confidence: 0.85,
-      },
-      {
-        id: "1",
-        text: "User cycles to the office every weekday",
-        event: "UPDATE",
-      },
-    ]);
+    expect(result.decisions).toHaveLength(2);
+    expect(result.decisions[0]).toMatchObject({
+      event: "ADD",
+      id: "3",
+      text: "User paints landscapes at night",
+      category: "OTHER",
+      importance: 0.4,
+      confidence: 0.85,
+    });
+    expect(result.decisions[1]).toMatchObject({
+      id: "1",
+      text: "User cycles to the office every weekday",
+      event: "UPDATE",
+    });
     expect(result.createdMemoryIds).toEqual([144]);
     expect(result.updatedMemoryIds).toEqual([88]);
     expect(result.factContexts).toHaveLength(2);
@@ -486,6 +503,7 @@ describe("runMemoryExtraction", () => {
         content: "Please update that I now jog every evening.",
         createdAt,
         extracted: false,
+        metadata: null,
       },
     ];
 
@@ -554,7 +572,7 @@ describe("runMemoryExtraction", () => {
     vi.spyOn(memoryModule, "updateMemory").mockResolvedValue(false);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: (tx: any) => unknown) => callback(dbModule.default),
+      ((callback: (tx: any) => unknown) => callback(dbModule.default)) as any,
     );
 
     vi.spyOn(console, "error").mockImplementation(() => {});

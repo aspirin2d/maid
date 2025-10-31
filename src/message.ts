@@ -12,6 +12,15 @@ import {
 import db, { type DbClient } from "./db/index";
 import { messages } from "./db/schema";
 
+type TransactionClient = Parameters<typeof db.transaction>[0] extends (
+  tx: infer T,
+  ...args: any[]
+) => any
+  ? T
+  : never;
+
+type DbOrTxClient = DbClient | TransactionClient;
+
 export type Message = InferSelectModel<typeof messages>;
 export type NewMessage = InferInsertModel<typeof messages>;
 
@@ -38,7 +47,7 @@ export interface ListMessagesOptions {
 
 export async function createMessage(
   input: CreateMessageInput,
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<Message> {
   const [created] = await client
     .insert(messages)
@@ -60,7 +69,7 @@ export async function createMessage(
 
 export async function createMessages(
   inputs: CreateMessageInput[],
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<Message[]> {
   if (inputs.length === 0) {
     return [];
@@ -84,7 +93,7 @@ export async function createMessages(
 
 export async function getMessage(
   id: number,
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<Message | undefined> {
   const [message] = await client
     .select()
@@ -97,7 +106,7 @@ export async function getMessage(
 
 export async function listMessages(
   options: ListMessagesOptions = {},
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<Message[]> {
   let query = client.select().from(messages);
   const conditions: SQL[] = [];
@@ -143,7 +152,7 @@ export async function listMessages(
 export async function updateMessage(
   id: number,
   updates: UpdateMessageInput,
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<Message | undefined> {
   const [updated] = await client
     .update(messages)
@@ -156,7 +165,7 @@ export async function updateMessage(
 
 export async function deleteMessage(
   id: number,
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<boolean> {
   const deleted = await client
     .delete(messages)
@@ -168,7 +177,7 @@ export async function deleteMessage(
 
 export async function deleteMessages(
   ids: number[],
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<number> {
   if (ids.length === 0) {
     return 0;
@@ -185,7 +194,7 @@ export async function deleteMessages(
 export async function markMessagesExtracted(
   ids: number[],
   extracted = true,
-  client: DbClient = db,
+  client: DbOrTxClient = db,
 ): Promise<number> {
   if (ids.length === 0) {
     return 0;

@@ -10,9 +10,18 @@ import {
   type InferInsertModel,
   type InferSelectModel,
 } from "drizzle-orm";
-import db from "./db/index";
+import db, { type DbClient } from "./db/index";
 import { memory } from "./db/schema";
 import { embedText, type Provider } from "./llm";
+
+type TransactionClient = Parameters<typeof db.transaction>[0] extends (
+  tx: infer T,
+  ...args: any[]
+) => any
+  ? T
+  : never;
+
+type DbOrTxClient = DbClient | TransactionClient;
 
 let currentEmbedText = embedText;
 
@@ -68,6 +77,7 @@ async function upsertMemoryEmbedding(
   memoryId: number,
   content: string,
   provider: Provider = "ollama",
+  client: DbOrTxClient = db,
 ): Promise<void> {
   if (!content) {
     return;
@@ -86,10 +96,10 @@ async function upsertMemoryEmbedding(
     const memoryKey = String(memoryId);
 
     // Delete existing embedding if any
-    db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
+    client.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
 
     // Insert new embedding
-    db.run(
+    client.run(
       sql`INSERT INTO vec_memories(memory_id, embedding, payload)
           VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
     );
@@ -168,8 +178,9 @@ export async function searchSimilarMemories(
 export async function createMemory(
   input: CreateMemoryInput,
   provider: Provider = "ollama",
+  client: DbOrTxClient = db,
 ): Promise<number> {
-  const [inserted] = await db
+  const [inserted] = await client
     .insert(memory)
     .values({
       userId: input.userId,
@@ -189,7 +200,7 @@ export async function createMemory(
 
   // Generate and store embedding if content exists
   if (input.content) {
-    await upsertMemoryEmbedding(inserted.id, input.content, provider);
+    await upsertMemoryEmbedding(inserted.id, input.content, provider, client);
   }
 
   return inserted.id;
@@ -201,12 +212,13 @@ export async function createMemory(
 export async function createMemories(
   inputs: CreateMemoryInput[],
   provider: Provider = "ollama",
+  client: DbOrTxClient = db,
 ): Promise<number[]> {
   if (inputs.length === 0) {
     return [];
   }
 
-  const insertedRecords = await db
+  const insertedRecords = await client
     .insert(memory)
     .values(
       inputs.map((input) => ({
@@ -227,7 +239,7 @@ export async function createMemories(
     insertedRecords.map(async (record, index) => {
       const content = inputs[index]?.content;
       if (content) {
-        await upsertMemoryEmbedding(record.id, content, provider);
+        await upsertMemoryEmbedding(record.id, content, provider, client);
       }
     }),
   );
@@ -241,7 +253,7 @@ export async function createMemories(
 export async function createMemoriesWithEmbeddings(
   inputs: CreateMemoryInput[],
   embeddings: number[][],
-  provider: Provider = "ollama",
+  client: DbOrTxClient = db,
 ): Promise<number[]> {
   if (inputs.length === 0) {
     return [];
@@ -253,7 +265,7 @@ export async function createMemoriesWithEmbeddings(
     );
   }
 
-  const insertedRecords = await db
+  const insertedRecords = await client
     .insert(memory)
     .values(
       inputs.map((input) => ({
@@ -276,10 +288,10 @@ export async function createMemoriesWithEmbeddings(
     const embedding = embeddings[i];
 
     if (content && embedding && embedding.length > 0) {
-      const memoryKey = String(record.id);
+      const memoryKey = String(record?.id ?? "");
       // Insert embedding directly (skip generation since we have it)
-      db.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
-      db.run(
+      client.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
+      client.run(
         sql`INSERT INTO vec_memories(memory_id, embedding, payload)
             VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
       );
@@ -310,8 +322,9 @@ export async function updateMemory(
   memoryId: number,
   updates: UpdateMemoryInput,
   provider: Provider = "ollama",
+  client: DbOrTxClient = db,
 ): Promise<boolean> {
-  const result = await db
+  const result = await client
     .update(memory)
     .set({
       ...updates,
@@ -322,7 +335,7 @@ export async function updateMemory(
 
   // Regenerate embedding if content was updated
   if (result.length > 0 && updates.content) {
-    await upsertMemoryEmbedding(memoryId, updates.content, provider);
+    await upsertMemoryEmbedding(memoryId, updates.content, provider, client);
   }
 
   return result.length > 0;
