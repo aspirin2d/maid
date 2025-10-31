@@ -172,6 +172,120 @@ bun examples/memory-extraction.ts
 bun examples/memory-extraction.ts --provider openai
 ```
 
+## Memory Extraction Flow
+
+The memory extraction system intelligently processes conversation messages and maintains a unified memory database with automatic deduplication and updates.
+
+### Flow Diagram
+
+```mermaid
+flowchart TD
+    Start([Start: runMemoryExtraction]) --> FetchMsg[1. Fetch Pending Messages<br/>- Get unextracted messages<br/>- Filter by user/assistant role<br/>- Order by createdAt]
+
+    FetchMsg --> CheckMsg{Messages<br/>found?}
+    CheckMsg -->|No| ReturnEmpty[Return empty result]
+    CheckMsg -->|Yes| ExtractFacts[2. Extract Facts from Conversation<br/>- Format conversation with IDs & timestamps<br/>- LLM structured output<br/>- Assign fact IDs: F1, F2, F3...<br/>- Extract: statement, category,<br/>importance, confidence]
+
+    ExtractFacts --> BatchEmbed[3. Prepare Memory Matches<br/>🚀 OPTIMIZATION: Batch embed all facts at once<br/>- Generate embeddings for all facts<br/>- Search similar memories per fact<br/>- Assign unified labels: 1,2,3... memories<br/>then memoryCount+1, +2... for facts]
+
+    BatchEmbed --> SplitFacts{Separate facts<br/>by similarity}
+
+    SplitFacts -->|No similar<br/>memories| DirectADD[4a. Direct ADD Decisions<br/>🚀 OPTIMIZATION: Skip LLM call<br/>- Create ADD decision for each fact<br/>- Preserve fact metadata]
+
+    SplitFacts -->|Has similar<br/>memories| LLMDecide[4b. LLM Decision Phase<br/>- Send memories + facts to LLM<br/>- LLM decides: ADD or UPDATE<br/>- Returns decisions with content]
+
+    DirectADD --> MergeDecisions[Merge all decisions]
+    LLMDecide --> MergeDecisions
+
+    MergeDecisions --> Transaction[5. Apply Decisions in Transaction]
+
+    Transaction --> Validate[5a. Validate & Prepare<br/>- ADD: Check fact exists, use fact metadata<br/>- UPDATE: Check memory exists,<br/>use highest importance fact metadata]
+
+    Validate --> BatchCreate[5b. Batch Create Memories<br/>🚀 OPTIMIZATION: Reuse embeddings<br/>- Use pre-computed embeddings<br/>- Insert all memories at once<br/>- Insert all vectors at once]
+
+    BatchCreate --> SeqUpdate[5c. Sequential Updates<br/>- Update each memory with new content<br/>- Regenerate embeddings<br/>- Track previous_content]
+
+    SeqUpdate --> MarkMsg[5d. Mark Messages as Extracted<br/>- Update extraction status<br/>- Within same transaction]
+
+    MarkMsg --> Commit{Transaction<br/>commit}
+    Commit -->|Success| ReturnResult[Return Result<br/>- Created memory IDs<br/>- Updated memory IDs<br/>- Marked message IDs<br/>- Facts & decisions]
+    Commit -->|Error| Rollback[Rollback all changes]
+
+    ReturnResult --> End([End])
+    ReturnEmpty --> End
+    Rollback --> End
+
+    style Start fill:#e1f5e1
+    style End fill:#ffe1e1
+    style BatchEmbed fill:#fff4e1
+    style DirectADD fill:#fff4e1
+    style BatchCreate fill:#fff4e1
+    style Transaction fill:#e1e5ff
+```
+
+### Key Components
+
+#### 1. Fact Extraction (`extractFactsFromConversation`)
+- **Input**: Conversation messages
+- **Process**:
+  - Format messages with IDs and timestamps
+  - LLM extracts structured facts using `FactRetrievalSchema`
+  - Each fact includes: `statement`, `category`, `importance`, `confidence`
+- **Output**: Array of facts with metadata
+- **Note**: Metadata is evaluated **only once** here, never re-evaluated
+
+#### 2. Memory Matching (`prepareMemoryMatches`)
+- **Optimization**: Batch embeds all facts in one API call
+- **Process**:
+  - Generate embeddings for all facts simultaneously
+  - Search for similar existing memories for each fact
+  - Assign unified numeric labels (1, 2, 3... for memories, then continue for facts)
+  - Build relationship map between facts and similar memories
+- **Output**: `factMatches`, `memoryMatches`, `factVectors`
+
+#### 3. Decision Making (`decideMemoryActions`)
+- **Optimization**: Separate facts into two groups
+  - **Facts WITHOUT similar memories** → Direct ADD (no LLM call needed)
+  - **Facts WITH similar memories** → LLM decides ADD or UPDATE
+- **Process**:
+  - Direct ADD preserves fact's metadata (category, importance, confidence)
+  - LLM receives memory snapshot and fact summaries
+  - LLM returns decisions with action (ADD/UPDATE) and merged content
+- **Output**: Combined array of ADD/UPDATE decisions
+
+#### 4. Application (`applyMemoryDecisions`)
+- **Transaction**: All operations are atomic (rollback on failure)
+- **Three-pass approach**:
+  1. **Validate & Prepare**: Check references, prepare metadata
+     - ADD: Use fact's original metadata
+     - UPDATE: Use highest importance triggering fact's metadata
+  2. **Batch Create**: Insert all ADD decisions with pre-computed embeddings
+  3. **Sequential Update**: Apply each UPDATE with embedding regeneration
+  4. **Mark Messages**: Update extraction status in same transaction
+- **Output**: Created/updated memory IDs, marked message IDs
+
+### Optimizations
+
+1. **🚀 Batch Embedding**: All facts are embedded in one API call instead of N calls
+2. **🚀 Direct ADD**: Facts without similar memories skip LLM decision phase entirely
+3. **🚀 Pre-computed Embeddings**: Reuse embeddings from search phase when creating memories
+4. **🚀 Unified Labeling**: Simple numeric IDs (1, 2, 3...) eliminate ID mapping complexity
+5. **🔒 Transaction**: Ensures atomicity - either all operations succeed or none do
+
+### Metadata Handling
+
+**Important**: Metadata (category, importance, confidence) is evaluated **once** during fact extraction:
+
+- **Extraction Phase**: LLM evaluates each fact and assigns metadata
+- **Decision Phase**: LLM only decides ADD/UPDATE actions, does not re-evaluate metadata
+- **ADD Operation**: Uses fact's original metadata
+- **UPDATE Operation**: Uses the triggering fact's metadata (highest importance if multiple facts)
+
+This design ensures:
+- Consistent metadata evaluation
+- Reduced LLM cognitive load during decision-making
+- Clear separation of concerns (extraction vs. decision)
+
 ## API Documentation
 
 ### Memory Module (`src/memory.ts`)
