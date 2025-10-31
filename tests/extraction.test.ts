@@ -96,20 +96,36 @@ describe("runMemoryExtraction", () => {
       .spyOn(messageModule, "markMessagesExtracted")
       .mockResolvedValue(messages.length);
 
-    const chatMock = vi.fn().mockResolvedValue({
-      message: {
-        content: JSON.stringify({
-          facts: [
-            {
-              text: "User practices yoga every morning",
-              category: "ROUTINE",
-              importance: 0.6,
-              confidence: 0.9,
-            },
-          ],
-        }),
-      },
-    });
+    const chatMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        message: {
+          content: JSON.stringify({
+            facts: [
+              {
+                text: "User practices yoga every morning",
+                category: "ROUTINE",
+                importance: 0.6,
+                confidence: 0.9,
+              },
+            ],
+          }),
+        },
+      })
+      .mockResolvedValueOnce({
+        message: {
+          content: JSON.stringify({
+            decisions: [
+              {
+                action: "ADD",
+                fact_id: "F1",
+                memory_id: null,
+                combined_text: null,
+              },
+            ],
+          }),
+        },
+      });
 
     vi.spyOn(llmModule, "getOllama").mockReturnValue({ chat: chatMock } as any);
     const embedTextsMock = vi
@@ -133,7 +149,7 @@ describe("runMemoryExtraction", () => {
     const result = await runMemoryExtraction({ userId: 9 });
 
     expect(listMessagesMock).toHaveBeenCalledTimes(1);
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2); // fact extraction + decision
     expect(embedTextsMock).toHaveBeenCalledWith("ollama", [
       "User practices yoga every morning",
     ]);
@@ -165,8 +181,8 @@ describe("runMemoryExtraction", () => {
     expect(result.updatedMemoryIds).toEqual([]);
     expect(result.decisions).toEqual([
       expect.objectContaining({
-        event: "ADD",
-        id: "1",
+        action: "ADD",
+        fact_id: "F1",
       }),
     ]);
     expect(result.memoryReferences).toHaveLength(0);
@@ -233,11 +249,12 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValueOnce({
         message: {
           content: JSON.stringify({
-            memory: [
+            decisions: [
               {
-                id: "1",
-                text: "User bikes to work every weekday morning",
-                event: "UPDATE",
+                action: "UPDATE",
+                fact_id: "F1",
+                memory_id: "M1",
+                combined_text: "User bikes to work every weekday morning",
               },
             ],
           }),
@@ -298,13 +315,14 @@ describe("runMemoryExtraction", () => {
     expect(result.updatedMemoryIds).toEqual([33]);
     expect(result.decisions).toEqual([
       {
-        id: "1",
-        text: "User bikes to work every weekday morning",
-        event: "UPDATE",
+        action: "UPDATE",
+        fact_id: "F1",
+        memory_id: "M1",
+        combined_text: "User bikes to work every weekday morning",
       },
     ]);
-    expect(result.factContexts[0]?.fact.factId).toBe("2");
-    expect(result.labelToMemoryId["1"]).toBe(33);
+    expect(result.factContexts[0]?.fact.factId).toBe("F1");
+    expect(result.labelToMemoryId["M1"]).toBe(33);
     expect(result.markedMessageCount).toBe(1);
   });
 
@@ -373,11 +391,18 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValueOnce({
         message: {
           content: JSON.stringify({
-            memory: [
+            decisions: [
               {
-                id: "1",
-                text: "User cycles to the office every weekday",
-                event: "UPDATE",
+                action: "UPDATE",
+                fact_id: "F1",
+                memory_id: "M1",
+                combined_text: "User cycles to the office every weekday",
+              },
+              {
+                action: "ADD",
+                fact_id: "F2",
+                memory_id: null,
+                combined_text: null,
               },
             ],
           }),
@@ -454,25 +479,24 @@ describe("runMemoryExtraction", () => {
 
     expect(result.decisions).toEqual([
       {
-        event: "ADD",
-        id: "3",
-        text: "User paints landscapes at night",
-        category: "OTHER",
-        importance: 0.4,
-        confidence: 0.85,
+        action: "UPDATE",
+        fact_id: "F1",
+        memory_id: "M1",
+        combined_text: "User cycles to the office every weekday",
       },
       {
-        id: "1",
-        text: "User cycles to the office every weekday",
-        event: "UPDATE",
+        action: "ADD",
+        fact_id: "F2",
+        memory_id: null,
+        combined_text: null,
       },
     ]);
     expect(result.createdMemoryIds).toEqual([144]);
     expect(result.updatedMemoryIds).toEqual([88]);
     expect(result.factContexts).toHaveLength(2);
-    expect(result.factContexts[0]?.similarMemoryLabels).toEqual(["1"]);
+    expect(result.factContexts[0]?.similarMemoryLabels).toEqual(["M1"]);
     expect(result.factContexts[1]?.similarMemoryLabels).toEqual([]);
-    expect(result.labelToMemoryId["1"]).toBe(88);
+    expect(result.labelToMemoryId["M1"]).toBe(88);
     expect(result.markedMessageCount).toBe(1);
   });
 

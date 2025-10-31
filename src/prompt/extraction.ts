@@ -36,23 +36,32 @@ export const FactRetrievalSchema = z.object({
 
 // Define Zod schema for memory update output
 export const MemoryUpdateSchema = z.object({
-  memory: z
+  decisions: z
     .array(
       z.object({
-        id: z
-          .string()
-          .describe("The unique identifier of the memory/fact item."),
-        text: z.string().describe("The content of the memory/fact item."),
-        event: z
-          .enum(["ADD", "UPDATE"])
+        action: z
+          .enum(["ADD", "UPDATE", "SKIP"])
           .describe(
-            "The action taken for this memory item (ADD, UPDATE, or DELETE).",
+            "The action to take: ADD (new memory), UPDATE (modify existing), SKIP (redundant).",
+          ),
+        fact_id: z
+          .string()
+          .describe("The fact ID (e.g., F1, F2) this decision is about."),
+        memory_id: z
+          .string()
+          .optional()
+          .describe(
+            "For UPDATE: the memory ID (e.g., M1, M2) to update. Leave empty for ADD/SKIP.",
+          ),
+        combined_text: z
+          .string()
+          .optional()
+          .describe(
+            "For UPDATE: the merged text combining memory + fact. Leave empty for ADD/SKIP.",
           ),
       }),
     )
-    .describe(
-      "An array representing the state of memory items after processing new facts.",
-    ),
+    .describe("Array of decisions for each fact."),
 });
 
 export function getFactRetrievalMessages(
@@ -104,55 +113,56 @@ export function getUpdateMemoryMessages(
   retrievedOldMemory: Array<{ id: string; text: string }>,
   newRetrievedFacts: Array<{ id: string; text: string }>,
 ): string {
-  // Labels are already unified (1, 2, 3...) when passed in
   const formattedExisting = retrievedOldMemory.length
-    ? retrievedOldMemory.map(({ id, text }) => `${id}. ${text}`).join("\n")
+    ? retrievedOldMemory.map(({ id, text }) => `${id}: ${text}`).join("\n")
     : "(none)";
 
   const formattedFacts = newRetrievedFacts.length
-    ? newRetrievedFacts.map(({ id, text }) => `${id}. ${text}`).join("\n")
+    ? newRetrievedFacts.map(({ id, text }) => `${id}: ${text}`).join("\n")
     : "(none)";
 
-  const memoryCount = retrievedOldMemory.length;
-  const exampleFactId = memoryCount > 0 ? memoryCount + 1 : 1;
-  const exampleMemoryId = memoryCount > 0 ? 1 : "(none)";
-
-  return `Compare new facts with existing memories and decide: ADD or UPDATE?
+  return `Compare new facts with existing memories and decide the appropriate action for each fact.
 
 EXISTING MEMORIES:
 ${formattedExisting}
 
-NEW FACTS:
+NEW FACTS (with metadata already evaluated):
 ${formattedFacts}
 
 DECISION LOGIC:
 
-ADD - Use when fact is completely new:
+ADD - When fact is completely new:
 • No existing memory covers this information
-• Format: {"id":"${exampleFactId}","text":"","event":"ADD"}
-• Leave "text" empty - system copies the fact automatically
-• Fact's metadata (category, importance, confidence) is preserved
+• The fact will be stored as-is with its pre-evaluated metadata
 
-UPDATE - Use when fact relates to existing memory:
-• Fact refines, corrects, or conflicts with an existing memory
-• Format: {"id":"${exampleMemoryId}","text":"Updated combined text","event":"UPDATE"}
-• Combine old memory + new fact into one clear, concise statement
-• Example: Memory "User likes coffee" + Fact "User prefers dark roast" → "User likes dark roast coffee"
-• Fact's metadata will replace memory's metadata
+UPDATE - When fact relates to existing memory:
+• Fact refines, corrects, or conflicts with existing memory
+• Combine memory + fact into clear, concise statement
+• Example: Memory M1 "User likes coffee" + Fact F1 "User prefers dark roast"
+  → UPDATE M1 with "User likes dark roast coffee"
+• The fact's metadata will replace the memory's metadata
 
-SKIP - When:
-• Fact is redundant with existing memory (no new information)
-• Simply omit from output
+SKIP - When fact is redundant:
+• Fact duplicates existing memory with no new information
+• No action needed
 
 CONSOLIDATION:
-• If multiple facts relate to same memory, UPDATE it once with all information combined
-• If multiple facts are unrelated, ADD each separately
+• Multiple facts can UPDATE the same memory (combine all info)
+• Multiple facts can each ADD separately if unrelated
 
-FORMAT:
-{"memory":[{"id":"X","text":"...","event":"ADD/UPDATE"}]}
+OUTPUT FORMAT:
+{"decisions": [
+  {"action": "ADD", "fact_id": "F1", "memory_id": null, "combined_text": null},
+  {"action": "UPDATE", "fact_id": "F2", "memory_id": "M1", "combined_text": "Updated text here"},
+  {"action": "SKIP", "fact_id": "F3", "memory_id": null, "combined_text": null}
+]}
+
+RULES:
+• Use memory IDs (M1, M2...) and fact IDs (F1, F2...)
 • Always use "User" as subject - never "I", "They", "He", "She"
-• Keep text concise and factual
-• Use numbers (${retrievedOldMemory.length > 0 ? `1-${memoryCount}` : "none"} for memories, ${exampleFactId}+ for facts) to reference items`;
+• Keep combined_text concise and factual
+• One decision per fact
+• For ADD/SKIP: leave memory_id and combined_text as null/empty`;
 }
 
 export function parseMessages(messages: string[]): string {
