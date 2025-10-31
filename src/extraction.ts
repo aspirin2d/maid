@@ -61,9 +61,9 @@ export type FactMatchContext = {
 
 export type MemoryDecision = z.infer<
   typeof MemoryUpdateSchema
->["memory"][number];
+>["decisions"][number];
 
-export type MemoryDecisionAction = MemoryDecision["event"];
+export type MemoryDecisionAction = MemoryDecision["action"];
 
 export interface AppliedMemoryChange {
   decision: MemoryDecision;
@@ -238,9 +238,95 @@ async function fetchPendingMessages(
   });
 }
 
+function cosineSimilarity(a: number[], b: number[]): number {
+  if (a.length !== b.length) return 0;
+  let dotProduct = 0;
+  let magnitudeA = 0;
+  let magnitudeB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dotProduct += a[i]! * b[i]!;
+    magnitudeA += a[i]! * a[i]!;
+    magnitudeB += b[i]! * b[i]!;
+  }
+  return dotProduct / (Math.sqrt(magnitudeA) * Math.sqrt(magnitudeB));
+}
+
+async function deduplicateFacts(
+  facts: ExtractedFact[],
+  embeddings: number[][],
+  similarityThreshold = 0.95,
+): Promise<{
+  deduplicatedFacts: ExtractedFact[];
+  deduplicatedEmbeddings: number[][];
+}> {
+  if (facts.length === 0) {
+    return { deduplicatedFacts: [], deduplicatedEmbeddings: [] };
+  }
+
+  const kept: boolean[] = facts.map(() => true);
+  const merged: Map<number, number[]> = new Map(); // index -> list of merged indices
+
+  // Find similar facts
+  for (let i = 0; i < facts.length; i++) {
+    if (!kept[i]) continue;
+    for (let j = i + 1; j < facts.length; j++) {
+      if (!kept[j]) continue;
+      const similarity = cosineSimilarity(embeddings[i]!, embeddings[j]!);
+      if (similarity >= similarityThreshold) {
+        // Merge j into i
+        if (!merged.has(i)) {
+          merged.set(i, [i]);
+        }
+        merged.get(i)!.push(j);
+        kept[j] = false;
+      }
+    }
+  }
+
+  // Build deduplicated list
+  const deduplicatedFacts: ExtractedFact[] = [];
+  const deduplicatedEmbeddings: number[][] = [];
+
+  for (let i = 0; i < facts.length; i++) {
+    if (!kept[i]) continue;
+
+    const fact = facts[i]!;
+    const mergedIndices = merged.get(i) || [i];
+
+    if (mergedIndices.length === 1) {
+      // No merge, keep as-is
+      deduplicatedFacts.push(fact);
+      deduplicatedEmbeddings.push(embeddings[i]!);
+    } else {
+      // Merge: take highest importance and confidence
+      const mergedFacts = mergedIndices.map((idx) => facts[idx]!);
+      const maxImportance = Math.max(
+        ...mergedFacts.map((f) => f.importance || 0.5),
+      );
+      const maxConfidence = Math.max(
+        ...mergedFacts.map((f) => f.confidence || 0.5),
+      );
+      const allSourceIds = Array.from(
+        new Set(mergedFacts.flatMap((f) => f.sourceMessageIds)),
+      );
+
+      deduplicatedFacts.push({
+        ...fact,
+        importance: maxImportance,
+        confidence: maxConfidence,
+        sourceMessageIds: allSourceIds,
+      });
+      deduplicatedEmbeddings.push(embeddings[i]!);
+    }
+  }
+
+  return { deduplicatedFacts, deduplicatedEmbeddings };
+}
+
 async function buildSimilarityContext(args: {
   userId: number;
   facts: ExtractedFact[];
+  embeddings: number[][];
   similarityLimit: number;
   embeddingProvider: Provider;
 }): Promise<{
@@ -248,11 +334,10 @@ async function buildSimilarityContext(args: {
   memoryReferences: MemoryReference[];
   labelToMemoryId: Record<string, number>;
 }> {
-  const memoryIdToTempLabel = new Map<number, string>();
-  const tempMemoryReferences: MemoryReference[] = [];
-  const tempFactContexts: FactMatchContext[] = [];
+  const memoryIdToLabel = new Map<number, string>();
+  const memoryReferences: MemoryReference[] = [];
+  const factContexts: FactMatchContext[] = [];
 
-  // Optimization: Batch generate embeddings for all facts at once
   if (args.facts.length === 0) {
     return {
       factContexts: [],
@@ -261,13 +346,16 @@ async function buildSimilarityContext(args: {
     };
   }
 
-  const factStatements = args.facts.map((fact) => fact.statement);
-  const embeddings = await embedTexts(args.embeddingProvider, factStatements);
+  // Assign simple F# IDs to facts
+  const factsWithIds = args.facts.map((fact, index) => ({
+    ...fact,
+    factId: `F${index + 1}`,
+  }));
 
-  // Process each fact with its pre-computed embedding (using temporary M# labels)
-  for (let i = 0; i < args.facts.length; i++) {
-    const fact = args.facts[i]!;
-    const embedding = embeddings[i]!;
+  // Process each fact with its pre-computed embedding
+  for (let i = 0; i < factsWithIds.length; i++) {
+    const fact = factsWithIds[i]!;
+    const embedding = args.embeddings[i]!;
 
     const similarMemories = await searchSimilarMemories(fact.statement, {
       userId: args.userId,
@@ -280,15 +368,15 @@ async function buildSimilarityContext(args: {
     const labelsForFact: string[] = [];
 
     for (const match of similarMemories) {
-      const existingLabel = memoryIdToTempLabel.get(match.id);
+      const existingLabel = memoryIdToLabel.get(match.id);
       if (existingLabel) {
         labelsForFact.push(existingLabel);
         continue;
       }
 
-      const label = `M${tempMemoryReferences.length + 1}`;
-      memoryIdToTempLabel.set(match.id, label);
-      tempMemoryReferences.push({
+      const label = `M${memoryReferences.length + 1}`;
+      memoryIdToLabel.set(match.id, label);
+      memoryReferences.push({
         label,
         memoryId: match.id,
         distance: match.distance,
@@ -300,37 +388,11 @@ async function buildSimilarityContext(args: {
       labelsForFact.push(label);
     }
 
-    tempFactContexts.push({
+    factContexts.push({
       fact,
       similarMemoryLabels: labelsForFact,
     });
   }
-
-  // Now unify labels: memories get 1, 2, 3... and facts get N+1, N+2, N+3...
-  const tempToUnified: Record<string, string> = {};
-
-  // Assign unified IDs to memories
-  const memoryReferences = tempMemoryReferences.map((ref, index) => {
-    const unifiedLabel = (index + 1).toString();
-    tempToUnified[ref.label] = unifiedLabel;
-    return { ...ref, label: unifiedLabel };
-  });
-
-  // Assign unified IDs to facts
-  const memoryCount = tempMemoryReferences.length;
-  const unifiedFacts = args.facts.map((fact, index) => {
-    const unifiedLabel = (memoryCount + index + 1).toString();
-    tempToUnified[fact.factId] = unifiedLabel;
-    return { ...fact, factId: unifiedLabel };
-  });
-
-  // Update fact contexts with unified labels
-  const factContexts = tempFactContexts.map((ctx, index) => ({
-    fact: unifiedFacts[index]!,
-    similarMemoryLabels: ctx.similarMemoryLabels.map(
-      (label) => tempToUnified[label] ?? label,
-    ),
-  }));
 
   const labelToMemoryId = Object.fromEntries(
     memoryReferences.map((ref) => [ref.label, ref.memoryId]),
@@ -345,7 +407,7 @@ async function decideMemoryActions(args: {
   model?: string;
   provider?: Provider;
 }): Promise<MemoryDecision[]> {
-  if (args.facts.length === 0 && args.memoryReferences.length === 0) {
+  if (args.facts.length === 0) {
     return [];
   }
 
@@ -353,14 +415,13 @@ async function decideMemoryActions(args: {
 
   const structured = await callStructuredJson({
     messages,
-    schemaName: "memory_update_planning",
+    schemaName: "memory_decision_planning",
     schema: MemoryUpdateSchema,
     model: args.model,
     provider: args.provider,
   });
 
-  // No mapping needed - unified IDs are used throughout
-  return structured.memory;
+  return structured.decisions;
 }
 
 async function applyMemoryDecisions(args: {
@@ -369,7 +430,6 @@ async function applyMemoryDecisions(args: {
   memoryReferences: MemoryReference[];
   provider: Provider;
   facts: ExtractedFact[];
-  factContexts?: FactMatchContext[];
 }): Promise<{
   changes: AppliedMemoryChange[];
   createdMemoryIds: number[];
@@ -393,31 +453,30 @@ async function applyMemoryDecisions(args: {
         updatedMemoryIds: [],
       };
 
-      switch (decision.event) {
-        case "ADD": {
-          const referencedFact = decision.id
-            ? factByLabel.get(decision.id)
-            : undefined;
+      const fact = factByLabel.get(decision.fact_id);
+      if (!fact) {
+        throw new Error(
+          `Decision references unknown fact ${decision.fact_id}`,
+        );
+      }
 
-          let content = referencedFact?.statement.trim();
+      switch (decision.action) {
+        case "ADD": {
+          const content = fact.statement.trim();
           if (!content) {
             throw new Error(
-              `ADD decision for label ${decision.id} is missing text content and does not reference a known fact`,
+              `ADD decision for fact ${decision.fact_id} has empty statement`,
             );
           }
 
-          // Always use the fact's metadata (never re-evaluate in decision phase)
-          const category = referencedFact?.category ?? "OTHER";
-          const importance = referencedFact?.importance ?? 0.5;
-          const confidence = referencedFact?.confidence ?? 0.5;
-
+          // Always use the fact's metadata (evaluated during extraction)
           const memoryId = await createMemory(
             {
               userId: args.userId,
               content,
-              category,
-              importance,
-              confidence,
+              category: fact.category,
+              importance: fact.importance,
+              confidence: fact.confidence,
               action: "ADD",
             },
             args.provider,
@@ -425,68 +484,57 @@ async function applyMemoryDecisions(args: {
 
           change.createdMemoryIds.push(memoryId);
           createdMemoryIds.push(memoryId);
-
           break;
         }
 
         case "UPDATE": {
-          const ref = memoryByLabel.get(decision.id);
-          if (!ref) {
+          if (!decision.memory_id) {
             throw new Error(
-              `UPDATE decision referenced unknown memory label ${decision.id}`,
+              `UPDATE decision for fact ${decision.fact_id} is missing memory_id`,
             );
           }
 
-          const newContent = (decision.text ?? "").trim();
+          const ref = memoryByLabel.get(decision.memory_id);
+          if (!ref) {
+            throw new Error(
+              `UPDATE decision references unknown memory ${decision.memory_id}`,
+            );
+          }
+
+          const newContent = (decision.combined_text ?? "").trim();
           if (!newContent) {
             throw new Error(
-              `UPDATE decision for memory ${decision.id} is missing text content`,
+              `UPDATE decision for fact ${decision.fact_id} is missing combined_text`,
             );
           }
 
           const previousContent = ref.content ?? ref.raw.content ?? null;
 
-          // Prepare update fields
-          const updateFields: any = {
-            content: newContent,
-            prevContent: previousContent ?? undefined,
-            action: "UPDATE",
-            deleted: 0,
-          };
-
-          // Find the fact(s) that triggered this update and use their metadata
-          // A memory UPDATE is triggered when a fact is similar to it
-          const triggeringFacts = args.factContexts
-            ?.filter((ctx) => ctx.similarMemoryLabels.includes(decision.id))
-            .map((ctx) => ctx.fact);
-
-          // If exactly one fact triggered this update, use its metadata
-          if (triggeringFacts && triggeringFacts.length === 1) {
-            const triggeringFact = triggeringFacts[0];
-            if (triggeringFact?.category) {
-              updateFields.category = triggeringFact.category;
-            }
-            if (triggeringFact?.importance !== undefined) {
-              updateFields.importance = triggeringFact.importance;
-            }
-            if (triggeringFact?.confidence !== undefined) {
-              updateFields.confidence = triggeringFact.confidence;
-            }
-          }
-          // If multiple facts triggered this, keep existing memory metadata
-          // (no changes to category, importance, confidence)
-
+          // Always use the fact's metadata (simplifies logic)
           const success = await updateMemory(
             ref.memoryId,
-            updateFields,
+            {
+              content: newContent,
+              prevContent: previousContent ?? undefined,
+              category: fact.category,
+              importance: fact.importance,
+              confidence: fact.confidence,
+              action: "UPDATE",
+              deleted: 0,
+            },
             args.provider,
           );
+
           if (!success) {
             throw new Error(`Failed to update memory ${ref.memoryId}`);
           }
 
+          // Update reference for consistency
           ref.raw.prevContent = previousContent;
           ref.raw.content = newContent;
+          ref.raw.category = fact.category;
+          ref.raw.importance = fact.importance;
+          ref.raw.confidence = fact.confidence;
           ref.raw.deleted = 0;
           ref.raw.action = "UPDATE";
           ref.raw.updatedAt = new Date();
@@ -496,13 +544,17 @@ async function applyMemoryDecisions(args: {
 
           change.updatedMemoryIds.push(ref.memoryId);
           updatedMemoryIds.push(ref.memoryId);
+          break;
+        }
 
+        case "SKIP": {
+          // No action needed - fact is redundant
           break;
         }
 
         default: {
           throw new Error(
-            `Unsupported memory decision event: ${decision.event}`,
+            `Unsupported decision action: ${(decision as any).action}`,
           );
         }
       }
@@ -561,57 +613,60 @@ export async function runMemoryExtraction(
       provider: llmProvider,
     });
 
-    // Step 3: Build similarity context (with unified IDs: 1, 2, 3...)
+    if (facts.length === 0) {
+      // No facts extracted, mark messages as processed
+      const markedMessageIds = messages.map((message) => message.id);
+      const markedMessageCount = await markMessagesExtracted(
+        markedMessageIds,
+        true,
+      );
+
+      return {
+        userId: options.userId,
+        messages,
+        facts: [],
+        factContexts: [],
+        memoryReferences: [],
+        labelToMemoryId: {},
+        decisions: [],
+        appliedChanges: [],
+        createdMemoryIds: [],
+        updatedMemoryIds: [],
+        markedMessageIds,
+        markedMessageCount,
+      };
+    }
+
+    // Step 3: Batch embed all facts for deduplication
+    const factStatements = facts.map((fact) => fact.statement);
+    const embeddings = await embedTexts(embeddingProvider, factStatements);
+
+    // Step 4: Deduplicate facts
+    const { deduplicatedFacts, deduplicatedEmbeddings } =
+      await deduplicateFacts(facts, embeddings);
+
+    // Step 5: Build similarity context with deduplicated facts
     ({ factContexts, memoryReferences, labelToMemoryId } =
       await buildSimilarityContext({
         userId: options.userId,
-        facts,
+        facts: deduplicatedFacts,
+        embeddings: deduplicatedEmbeddings,
         similarityLimit,
         embeddingProvider,
       }));
 
-    // Update facts reference to use the unified facts from factContexts
+    // Update facts reference to use facts with F# IDs from factContexts
     facts = factContexts.map((ctx) => ctx.fact);
 
-    // Step 4: Decide memory actions
-    // Separate facts with and without similar memories
-    const factsWithSimilarMemories: ExtractedFact[] = [];
-    const factsWithoutSimilarMemories: ExtractedFact[] = [];
+    // Step 6: Decide memory actions for ALL facts (unified decision logic)
+    decisions = await decideMemoryActions({
+      facts,
+      memoryReferences,
+      model: options.llmModel,
+      provider: llmProvider,
+    });
 
-    for (const context of factContexts) {
-      if (context.similarMemoryLabels.length === 0) {
-        factsWithoutSimilarMemories.push(context.fact);
-      } else {
-        factsWithSimilarMemories.push(context.fact);
-      }
-    }
-
-    // Create ADD decisions for facts without similar memories
-    const directAddDecisions: MemoryDecision[] =
-      factsWithoutSimilarMemories.map((fact) => ({
-        event: "ADD" as const,
-        id: fact.factId,
-        text: fact.statement,
-        category: fact.category,
-        importance: fact.importance,
-        confidence: fact.confidence,
-      }));
-
-    // Only call LLM for facts that have similar memories
-    let llmDecisions: MemoryDecision[] = [];
-    if (factsWithSimilarMemories.length > 0) {
-      llmDecisions = await decideMemoryActions({
-        facts: factsWithSimilarMemories,
-        memoryReferences,
-        model: options.llmModel,
-        provider: llmProvider,
-      });
-    }
-
-    // Combine direct ADD decisions with LLM decisions
-    decisions = [...directAddDecisions, ...llmDecisions];
-
-    // Step 5: Apply memory decisions (within transaction)
+    // Step 7: Apply memory decisions (within transaction)
     ({
       changes: appliedChanges,
       createdMemoryIds,
@@ -621,11 +676,10 @@ export async function runMemoryExtraction(
       decisions,
       memoryReferences,
       facts,
-      factContexts,
       provider: memoryProvider,
     }));
 
-    // Step 6: Mark messages as extracted (only after successful processing)
+    // Step 8: Mark messages as extracted (only after successful processing)
     const markedMessageIds = messages.map((message) => message.id);
     const markedMessageCount = markedMessageIds.length
       ? await markMessagesExtracted(markedMessageIds, true)
