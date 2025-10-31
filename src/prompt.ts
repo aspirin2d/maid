@@ -137,28 +137,20 @@ IMPORTANT:
 export function getUpdateMemoryMessages(
   retrievedOldMemory: Array<{ id: string; text: string }>,
   newRetrievedFacts: Array<{ id: string; text: string }>,
-): { prompt: string; unifiedToOriginal: Record<string, string> } {
-  // Create unified numbering: memories get 1, 2, 3... and facts continue from there
-  const unifiedToOriginal: Record<string, string> = {};
-
+): string {
+  // Labels are already unified (1, 2, 3...) when passed in
   const formattedExisting = retrievedOldMemory.length
-    ? retrievedOldMemory.map(({ id, text }, index) => {
-        const unifiedId = (index + 1).toString();
-        unifiedToOriginal[unifiedId] = id;
-        return `${unifiedId}. ${text}`;
-      }).join("\n")
+    ? retrievedOldMemory.map(({ id, text }) => `${id}. ${text}`).join("\n")
+    : "- None";
+
+  const formattedFacts = newRetrievedFacts.length
+    ? newRetrievedFacts.map(({ id, text }) => `${id}. ${text}`).join("\n")
     : "- None";
 
   const memoryCount = retrievedOldMemory.length;
-  const formattedFacts = newRetrievedFacts.length
-    ? newRetrievedFacts.map(({ id, text }, index) => {
-        const unifiedId = (memoryCount + index + 1).toString();
-        unifiedToOriginal[unifiedId] = id;
-        return `${unifiedId}. ${text}`;
-      }).join("\n")
-    : "- None";
+  const firstFactId = memoryCount + 1;
 
-  const prompt = `Your task: Compare new facts with existing memories and decide what to do.
+  return `Your task: Compare new facts with existing memories and decide what to do.
 
 RECENT MEMORIES:
 ${formattedExisting}
@@ -172,7 +164,7 @@ For each new fact, decide: ADD or UPDATE?
 WHEN TO ADD:
 - The fact is completely new
 - No existing memory covers this information
-- Use the fact's number: {"id":"${memoryCount + 1}","text":"","event":"ADD"}
+- Use the fact's number: {"id":"${firstFactId}","text":"","event":"ADD"}
 - Leave "text" empty, system will copy the fact automatically
 - The fact's category, importance, and confidence will be preserved
 
@@ -195,8 +187,6 @@ FORMATTING:
 4. Keep sentences clear and simple
 5. Use the unified numbers (1, 2, 3...) to reference items
 `;
-
-  return { prompt, unifiedToOriginal };
 }
 
 export function parseMessages(messages: string[]): string {

@@ -125,21 +125,75 @@ function buildFactRetrievalMessages(messages: Message[]): ChatMessage[] {
   ];
 }
 
+/**
+ * Convert M# and F# labels to unified numbering (1, 2, 3...) at the start of decision phase.
+ * This simplifies the prompt and eliminates the need for mapping.
+ */
+function unifyLabels(args: {
+  memoryReferences: MemoryReference[];
+  facts: ExtractedFact[];
+  factContexts: FactMatchContext[];
+  labelToMemoryId: Record<string, number>;
+}): {
+  memoryReferences: MemoryReference[];
+  facts: ExtractedFact[];
+  factContexts: FactMatchContext[];
+  labelToMemoryId: Record<string, number>;
+} {
+  const oldToUnified: Record<string, string> = {};
+
+  // Assign unified IDs to memories (1, 2, 3...)
+  const unifiedMemoryRefs = args.memoryReferences.map((ref, index) => {
+    const unifiedLabel = (index + 1).toString();
+    oldToUnified[ref.label] = unifiedLabel;
+    return { ...ref, label: unifiedLabel };
+  });
+
+  // Assign unified IDs to facts (continuing from memories)
+  const memoryCount = args.memoryReferences.length;
+  const unifiedFacts = args.facts.map((fact, index) => {
+    const unifiedLabel = (memoryCount + index + 1).toString();
+    oldToUnified[fact.factId] = unifiedLabel;
+    return { ...fact, factId: unifiedLabel };
+  });
+
+  // Update fact contexts to use unified labels
+  const unifiedFactContexts = args.factContexts.map((ctx) => ({
+    fact: unifiedFacts.find((f) => oldToUnified[ctx.fact.factId] === f.factId)!,
+    similarMemoryLabels: ctx.similarMemoryLabels.map(
+      (label) => oldToUnified[label] ?? label
+    ),
+  }));
+
+  // Update labelToMemoryId mapping
+  const unifiedLabelToMemoryId: Record<string, number> = {};
+  for (const [oldLabel, memoryId] of Object.entries(args.labelToMemoryId)) {
+    const unifiedLabel = oldToUnified[oldLabel];
+    if (unifiedLabel) {
+      unifiedLabelToMemoryId[unifiedLabel] = memoryId;
+    }
+  }
+
+  return {
+    memoryReferences: unifiedMemoryRefs,
+    facts: unifiedFacts,
+    factContexts: unifiedFactContexts,
+    labelToMemoryId: unifiedLabelToMemoryId,
+  };
+}
+
 function buildMemoryUpdateMessages(
   memoryReferences: MemoryReference[],
   facts: ExtractedFact[],
-): { messages: ChatMessage[]; unifiedToOriginal: Record<string, string> } {
+): ChatMessage[] {
   const snapshot = memoryReferences
     .filter((ref) => (ref.content ?? "").trim().length > 0)
     .map((ref) => ({ id: ref.label, text: ref.content ?? "" }));
   const factSummaries = facts
     .map((fact) => ({ id: fact.factId, text: fact.statement }))
     .filter((fact) => fact.text.trim().length > 0);
-  const { prompt, unifiedToOriginal } = getUpdateMemoryMessages(snapshot, factSummaries);
-  return {
-    messages: [{ role: "user", content: prompt }],
-    unifiedToOriginal,
-  };
+  const prompt = getUpdateMemoryMessages(snapshot, factSummaries);
+  return [{ role: "user", content: prompt }];
 }
 
 async function callStructuredJson<Schema extends ZodType>(args: {
@@ -326,11 +380,7 @@ async function decideMemoryActions(args: {
     return [];
   }
 
-  const { messages, unifiedToOriginal } = buildMemoryUpdateMessages(args.memoryReferences, args.facts);
-  const decisionPrompt = messages
-    .filter((message) => message.role === "user")
-    .map((message) => message.content)
-    .join("\n\n");
+  const messages = buildMemoryUpdateMessages(args.memoryReferences, args.facts);
 
   const structured = await callStructuredJson({
     messages,
@@ -340,11 +390,8 @@ async function decideMemoryActions(args: {
     provider: args.provider,
   });
 
-  // Map unified IDs back to original M# and F# labels
-  return structured.memory.map((decision) => ({
-    ...decision,
-    id: unifiedToOriginal[decision.id] ?? decision.id,
-  }));
+  // No mapping needed - unified IDs are used throughout
+  return structured.memory;
 }
 
 async function applyMemoryDecisions(args: {
@@ -553,6 +600,14 @@ export async function runMemoryExtraction(
         similarityLimit,
         embeddingProvider,
       }));
+
+    // Step 3.5: Unify labels (M#/F# -> 1, 2, 3...) before decision phase
+    ({ memoryReferences, facts, factContexts, labelToMemoryId } = unifyLabels({
+      memoryReferences,
+      facts,
+      factContexts,
+      labelToMemoryId,
+    }));
 
     // Step 4: Decide memory actions
     // Separate facts with and without similar memories
