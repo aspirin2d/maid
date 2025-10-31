@@ -276,17 +276,22 @@ async function buildSimilarityContext(args: {
   }> = [];
 
   // First pass: Collect all unique memories and their relationships to facts
+  const similarityResults = await Promise.all(
+    args.facts.map((fact, index) =>
+      searchSimilarMemories(fact.statement, {
+        userId: args.userId,
+        provider: args.embeddingProvider,
+        limit: args.similarityLimit,
+        includeDeleted: false,
+        embedding: embeddings[index]!,
+      }),
+    ),
+  );
+
   for (let i = 0; i < args.facts.length; i++) {
     const fact = args.facts[i]!;
     const embedding = embeddings[i]!;
-
-    const similarMemories = await searchSimilarMemories(fact.statement, {
-      userId: args.userId,
-      provider: args.embeddingProvider,
-      limit: args.similarityLimit,
-      includeDeleted: false,
-      embedding, // Pass pre-computed embedding to avoid regeneration
-    });
+    const similarMemories = similarityResults[i]!;
 
     const labelsForFact: string[] = [];
 

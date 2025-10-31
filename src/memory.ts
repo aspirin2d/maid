@@ -95,10 +95,7 @@ async function upsertMemoryEmbedding(
 
     const memoryKey = String(memoryId);
 
-    // Delete existing embedding if any
     client.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
-
-    // Insert new embedding
     client.run(
       sql`INSERT INTO vec_memories(memory_id, embedding, payload)
           VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
@@ -281,21 +278,32 @@ export async function createMemoriesWithEmbeddings(
     )
     .returning({ id: memory.id });
 
-  // Insert pre-computed embeddings for all memories with content
-  for (let i = 0; i < insertedRecords.length; i++) {
-    const record = insertedRecords[i];
-    const content = inputs[i]?.content;
-    const embedding = embeddings[i];
+  const vectorTuples: Array<ReturnType<typeof sql>> = [];
+  const memoryKeys: Array<ReturnType<typeof sql>> = [];
 
-    if (content && embedding && embedding.length > 0) {
-      const memoryKey = String(record?.id ?? "");
-      // Insert embedding directly (skip generation since we have it)
-      client.run(sql`DELETE FROM vec_memories WHERE memory_id = ${memoryKey}`);
-      client.run(
-        sql`INSERT INTO vec_memories(memory_id, embedding, payload)
-            VALUES (${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
-      );
+  insertedRecords.forEach((record, index) => {
+    const content = inputs[index]?.content;
+    const embedding = embeddings[index];
+
+    if (!content || !embedding || embedding.length === 0) {
+      return;
     }
+
+    const memoryKey = String(record?.id ?? "");
+    vectorTuples.push(
+      sql`(${memoryKey}, ${JSON.stringify(embedding)}, ${content})`,
+    );
+    memoryKeys.push(sql`${memoryKey}`);
+  });
+
+  if (vectorTuples.length > 0) {
+    client.run(
+      sql`DELETE FROM vec_memories WHERE memory_id IN (${sql.join(memoryKeys, sql`, `)})`,
+    );
+    client.run(
+      sql`INSERT INTO vec_memories(memory_id, embedding, payload)
+          VALUES ${sql.join(vectorTuples, sql`, `)}`,
+    );
   }
 
   return insertedRecords.map((r) => r.id);
