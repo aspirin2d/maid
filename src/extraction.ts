@@ -561,17 +561,15 @@ export async function runMemoryExtraction(
     }
 
     // Create ADD decisions for facts without similar memories
-    const directAddDecisions: MemoryDecision[] = factsWithoutSimilarMemories.map(
-      (fact) => ({
+    const directAddDecisions: MemoryDecision[] =
+      factsWithoutSimilarMemories.map((fact) => ({
         event: "ADD" as const,
         id: fact.factId,
         text: fact.statement,
         category: fact.category,
         importance: fact.importance,
         confidence: fact.confidence,
-        rationale: "No similar memories found, adding fact directly",
-      }),
-    );
+      }));
 
     // Only call LLM for facts that have similar memories
     let llmDecisions: MemoryDecision[] = [];

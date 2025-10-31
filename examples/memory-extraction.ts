@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import type { Provider } from "../src/llm";
 
 // Parse command line arguments

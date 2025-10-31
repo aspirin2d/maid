@@ -39,17 +39,15 @@ export const MemoryUpdateSchema = z.object({
   memory: z
     .array(
       z.object({
-        id: z.string().describe("The unique identifier of the memory item."),
-        text: z.string().describe("The content of the memory item."),
+        id: z
+          .string()
+          .describe("The unique identifier of the memory/fact item."),
+        text: z.string().describe("The content of the memory/fact item."),
         event: z
           .enum(["ADD", "UPDATE"])
           .describe(
             "The action taken for this memory item (ADD, UPDATE, or DELETE).",
           ),
-        rationale: z
-          .string()
-          .optional()
-          .describe("Brief explanation of why this action was chosen"),
       }),
     )
     .describe(
@@ -162,7 +160,7 @@ For each new fact, decide: ADD or UPDATE?
 WHEN TO ADD:
 - The fact is completely new
 - No existing memory covers this information
-- Use: {"id":"F1","text":"","event":"ADD","rationale":"explanation"}
+- Use: {"id":"F1","text":"","event":"ADD"}
 - Leave "text" empty, system will copy the fact automatically
 - The fact's category, importance, and confidence will be preserved
 
@@ -170,7 +168,7 @@ WHEN TO UPDATE:
 - The fact refines an existing memory
 - The fact corrects an existing memory
 - The fact conflicts with an existing memory
-- Use: {"id":"M2","text":"Updated text here","event":"UPDATE","rationale":"explanation"}
+- Use: {"id":"M2","text":"Updated text here","event":"UPDATE"}
 - Combine old and new information into one clear sentence
 - The fact's category, importance, and confidence will be used
 
@@ -183,18 +181,7 @@ FORMATTING:
 2. Always use "User" as subject
 3. Never use "I", "They", "He", "She"
 4. Keep sentences clear and simple
-5. Rationale is optional but helpful for debugging
-
-EXAMPLES:
-Good: "User prefers cappuccinos"
-Good: "User's name is Jordan"
-Good: "User lives in Seattle"
-Bad: "I prefer cappuccinos"
-Bad: "They live in Seattle"
-Bad: "Name is Jordan"
-
-OUTPUT FORMAT:
-{"memory":[{"id":"F1","text":"","event":"ADD","rationale":"Completely new preference"},{"id":"M2","text":"User drinks coffee black on weekdays","event":"UPDATE","rationale":"Refines existing coffee preference"}]}`;
+`;
 }
 
 export function parseMessages(messages: string[]): string {
