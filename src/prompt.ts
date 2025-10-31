@@ -58,78 +58,44 @@ export const MemoryUpdateSchema = z.object({
 export function getFactRetrievalMessages(
   parsedMessages: string,
 ): [string, string] {
-  const systemPrompt = `Your task: Extract important facts about the user from conversations.
+  const systemPrompt = `Extract important facts about the user from conversation history.
 
-WHAT TO EXTRACT:
-1. User's name, identity, and personal details (PERSONAL_INFO)
-2. Preferences (likes, dislikes, choices) (PREFERENCE)
-3. Goals and plans (GOAL)
-4. Routines and habits (ROUTINE)
-5. Relationships (RELATIONSHIP)
-6. Health needs (HEALTH)
-7. Important events (EVENT)
-8. Work and career (WORK)
-9. Other relevant information (OTHER)
+EXTRACT (with category):
+• PERSONAL_INFO: name, age, identity, location | importance 0.9-1.0
+• PREFERENCE: likes, dislikes, favorites | importance 0.5-0.8
+• GOAL: plans, aspirations, objectives | importance 0.7-0.9
+• ROUTINE: habits, schedules, regular activities | importance 0.5-0.7
+• RELATIONSHIP: friends, family, connections | importance 0.5-0.7
+• HEALTH: medical info, fitness, wellness | importance 0.7-0.9
+• EVENT: important occurrences, milestones | importance 0.3-0.7
+• WORK: career, job, professional info | importance 0.6-0.9
+• OTHER: anything else relevant | importance 0.3-0.6
 
-WHAT TO IGNORE:
-1. Greetings and small talk
-2. Jokes and casual chat
-3. Temporary moods
-4. What the assistant says
-5. Cancelled plans
-6. Third-party information
+IGNORE:
+Greetings, jokes, temporary moods, assistant messages, cancelled plans, third-party info
 
-FORMATTING RULES:
-1. Return JSON only with this structure:
-   {"facts": [{"text": "...", "category": "...", "importance": 0.0, "confidence": 0.0}]}
-2. No markdown, no extra text
-3. One fact per object
-4. ALWAYS start with "User" as the subject
-5. Never use "I", "They", "He", "She"
+CONFIDENCE (0-1):
+1.0 = explicitly stated | 0.8 = strongly implied | 0.5 = moderately implied | 0.3 = weakly implied
 
-CATEGORIES:
-- PERSONAL_INFO: name, age, identity, location
-- PREFERENCE: likes, dislikes, favorites
-- GOAL: plans, aspirations, objectives
-- ROUTINE: habits, schedules, regular activities
-- RELATIONSHIP: friends, family, connections
-- HEALTH: medical info, fitness, wellness
-- EVENT: important occurrences, milestones
-- WORK: career, job, professional info
-- OTHER: anything else relevant
-
-IMPORTANCE SCALE (0-1):
-- 0.9-1.0: Critical identity info (name, core values)
-- 0.7-0.9: Important preferences and goals
-- 0.5-0.7: Regular routines and relationships
-- 0.3-0.5: Minor preferences and events
-- 0.1-0.3: Casual mentions
-
-CONFIDENCE SCALE (0-1):
-- 0.9-1.0: Explicitly stated facts
-- 0.7-0.9: Strongly implied information
-- 0.5-0.7: Moderately implied
-- 0.3-0.5: Weakly implied
-- 0.1-0.3: Uncertain inference
+FORMAT:
+{"facts": [{"text": "User [fact]", "category": "CATEGORY", "importance": 0.0, "confidence": 0.0}]}
+• Start EVERY fact with "User" - never use "I", "They", "He", "She"
+• One fact per object - be specific and concise
+• Return empty array if no facts: {"facts": []}
+• Today: ${new Date().toISOString().split("T")[0]} - convert relative dates to YYYY-MM-DD
 
 EXAMPLES:
-- "I prefer coffee" → {"text": "User prefers coffee", "category": "PREFERENCE", "importance": 0.5, "confidence": 0.95}
-- "My name is Jack" → {"text": "User's name is Jack", "category": "PERSONAL_INFO", "importance": 1.0, "confidence": 1.0}
-- "I run on weekends" → {"text": "User runs on weekends", "category": "ROUTINE", "importance": 0.6, "confidence": 0.9}
+"I prefer coffee" → {"text": "User prefers coffee", "category": "PREFERENCE", "importance": 0.5, "confidence": 1.0}
+"My name is Jack" → {"text": "User's name is Jack", "category": "PERSONAL_INFO", "importance": 1.0, "confidence": 1.0}
+"I run on weekends" → {"text": "User runs on weekends", "category": "ROUTINE", "importance": 0.6, "confidence": 0.9}
 
-DATES:
-- Today is ${new Date().toISOString().split("T")[0]}
-- Convert relative dates to absolute dates (YYYY-MM-DD format)
-- Example: "next Monday" → "2025-11-03"
+RULES:
+1. Extract from user messages only
+2. Use latest information if corrected
+3. Never fabricate facts
+4. Be precise with importance and confidence scores`;
 
-IMPORTANT:
-- Only extract facts from user messages, not assistant messages
-- If user corrects information, use the new version only
-- Never make up facts
-- If no facts found, return {"facts": []}
-- One clear fact per object`;
-
-  const userPrompt = `Read this conversation and extract facts about the user. Return JSON format: {"facts": [{"text": "...", "category": "...", "importance": 0.0, "confidence": 0.0}]}\n\nConversation:\n${parsedMessages}`;
+  const userPrompt = `Extract facts from this conversation:\n\n${parsedMessages}`;
 
   return [systemPrompt, userPrompt];
 }
@@ -138,50 +104,55 @@ export function getUpdateMemoryMessages(
   retrievedOldMemory: Array<{ id: string; text: string }>,
   newRetrievedFacts: Array<{ id: string; text: string }>,
 ): string {
+  // Labels are already unified (1, 2, 3...) when passed in
   const formattedExisting = retrievedOldMemory.length
-    ? retrievedOldMemory.map(({ id, text }) => `- ${id}: ${text}`).join("\n")
-    : "- None";
+    ? retrievedOldMemory.map(({ id, text }) => `${id}. ${text}`).join("\n")
+    : "(none)";
 
   const formattedFacts = newRetrievedFacts.length
-    ? newRetrievedFacts.map(({ id, text }) => `- ${id}: ${text}`).join("\n")
-    : "- None";
+    ? newRetrievedFacts.map(({ id, text }) => `${id}. ${text}`).join("\n")
+    : "(none)";
 
-  return `Your task: Compare new facts with existing memories and decide what to do.
+  const memoryCount = retrievedOldMemory.length;
+  const exampleFactId = memoryCount > 0 ? memoryCount + 1 : 1;
+  const exampleMemoryId = memoryCount > 0 ? 1 : "(none)";
 
-EXISTING MEMORIES (M#):
+  return `Compare new facts with existing memories and decide: ADD or UPDATE?
+
+EXISTING MEMORIES:
 ${formattedExisting}
 
-NEW FACTS (F#):
+NEW FACTS:
 ${formattedFacts}
 
-YOUR JOB:
-For each new fact, decide: ADD or UPDATE?
+DECISION LOGIC:
 
-WHEN TO ADD:
-- The fact is completely new
-- No existing memory covers this information
-- Use: {"id":"F1","text":"","event":"ADD"}
-- Leave "text" empty, system will copy the fact automatically
-- The fact's category, importance, and confidence will be preserved
+ADD - Use when fact is completely new:
+• No existing memory covers this information
+• Format: {"id":"${exampleFactId}","text":"","event":"ADD"}
+• Leave "text" empty - system copies the fact automatically
+• Fact's metadata (category, importance, confidence) is preserved
 
-WHEN TO UPDATE:
-- The fact refines an existing memory
-- The fact corrects an existing memory
-- The fact conflicts with an existing memory
-- Use: {"id":"M2","text":"Updated text here","event":"UPDATE"}
-- Combine old and new information into one clear sentence
-- The fact's category, importance, and confidence will be used
+UPDATE - Use when fact relates to existing memory:
+• Fact refines, corrects, or conflicts with an existing memory
+• Format: {"id":"${exampleMemoryId}","text":"Updated combined text","event":"UPDATE"}
+• Combine old memory + new fact into one clear, concise statement
+• Example: Memory "User likes coffee" + Fact "User prefers dark roast" → "User likes dark roast coffee"
+• Fact's metadata will replace memory's metadata
 
-WHEN TO SKIP:
-- Existing memory already says the same thing
-- Don't include it in the output
+SKIP - When:
+• Fact is redundant with existing memory (no new information)
+• Simply omit from output
 
-FORMATTING:
-1. Return JSON: {"memory":[...]}
-2. Always use "User" as subject
-3. Never use "I", "They", "He", "She"
-4. Keep sentences clear and simple
-`;
+CONSOLIDATION:
+• If multiple facts relate to same memory, UPDATE it once with all information combined
+• If multiple facts are unrelated, ADD each separately
+
+FORMAT:
+{"memory":[{"id":"X","text":"...","event":"ADD/UPDATE"}]}
+• Always use "User" as subject - never "I", "They", "He", "She"
+• Keep text concise and factual
+• Use numbers (${retrievedOldMemory.length > 0 ? `1-${memoryCount}` : "none"} for memories, ${exampleFactId}+ for facts) to reference items`;
 }
 
 export function parseMessages(messages: string[]): string {
