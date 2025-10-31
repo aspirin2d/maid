@@ -39,7 +39,7 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValue(0);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: () => unknown) => callback(),
+      async (callback: (tx: any) => unknown) => callback(dbModule.default),
     );
 
     vi.spyOn(memoryModule, "createMemory").mockResolvedValue(0);
@@ -126,7 +126,7 @@ describe("runMemoryExtraction", () => {
 
     const transactionMock = vi
       .spyOn(dbModule.default, "transaction")
-      .mockImplementation(async (callback: () => unknown) => callback());
+      .mockImplementation(async (callback: (tx: any) => unknown) => callback(dbModule.default));
 
     const { runMemoryExtraction } = await import("../src/extraction");
 
@@ -260,7 +260,7 @@ describe("runMemoryExtraction", () => {
       .mockResolvedValue(true);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: () => unknown) => callback(),
+      async (callback: (tx: any) => unknown) => callback(dbModule.default),
     );
 
     const { runMemoryExtraction } = await import("../src/extraction");
@@ -402,7 +402,7 @@ describe("runMemoryExtraction", () => {
 
     const transactionMock = vi
       .spyOn(dbModule.default, "transaction")
-      .mockImplementation(async (callback: () => unknown) => callback());
+      .mockImplementation(async (callback: (tx: any) => unknown) => callback(dbModule.default));
 
     const { runMemoryExtraction } = await import("../src/extraction");
 
@@ -554,7 +554,7 @@ describe("runMemoryExtraction", () => {
     vi.spyOn(memoryModule, "updateMemory").mockResolvedValue(false);
 
     vi.spyOn(dbModule.default, "transaction").mockImplementation(
-      async (callback: () => unknown) => callback(),
+      async (callback: (tx: any) => unknown) => callback(dbModule.default),
     );
 
     vi.spyOn(console, "error").mockImplementation(() => {});
